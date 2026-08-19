@@ -113,7 +113,7 @@ class SimpleDTRTab(tk.Frame):
         open_folder_btn.pack(pady=(10, 0))
 
         footer_label = tk.Label(
-            self, text="Created by Jolou - August 20, 2026",
+            self, text="Created by Jolou - August 20, 2026 (v.1.0)",
             font=("Segoe UI", 9)
         )
 
@@ -310,7 +310,7 @@ class NIADTRTab(tk.Frame):
         open_folder_btn.pack(pady=(10, 0))
 
         footer_label = tk.Label(
-            self, text="Created by Jolou - August 20, 2026",
+            self, text="Created by Jolou - August 20, 2026 (v.1.0)",
             font=("Segoe UI", 9)
         )
 
