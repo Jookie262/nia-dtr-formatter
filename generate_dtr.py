@@ -246,13 +246,14 @@ def main():
         sys.exit(1)
 
     csv_path = sys.argv[1]
-    output_path = sys.argv[2] if len(sys.argv) > 2 else "DTR_combined.pdf"
-    if not output_path.lower().endswith(".pdf"):
-        output_path += ".pdf"
+    filename = sys.argv[2] if len(sys.argv) > 2 else "DTR_combined.pdf"
+    filename = os.path.basename(filename)  # ignore any path the user typed
+    if not filename.lower().endswith(".pdf"):
+        filename += ".pdf"
 
-    out_dir = os.path.dirname(output_path)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
+    output_dir = "output"
+    os.makedirs(output_dir, exist_ok=True)  # creates it if missing, reuses it if it exists
+    output_path = os.path.join(output_dir, filename)
 
     grouped = load_and_group(csv_path)
     names = build_combined_pdf(grouped, output_path)
