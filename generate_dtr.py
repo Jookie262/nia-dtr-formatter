@@ -9,8 +9,8 @@ Expected CSV columns: Index, Timestamp, ID, Name, Details
     are handled correctly:
         AM In  : 12:00 AM - 11:59 AM
         AM Out : 12:00 PM - 12:29 PM
-        PM In  : 12:30 PM - 12:59 PM
-        PM Out : 1:00 PM  - 11:59 PM
+        PM In  : 12:30 PM - 1:00  PM
+        PM Out : 1:01 PM  - 11:59 PM
     If multiple scans fall in the same slot on a day with 5 or more total
     scans, the latest scan in that slot is kept. On days with fewer than
     5 scans, the earliest scan is kept for "In" slots and the latest for
@@ -76,15 +76,15 @@ def classify_scan(t: datetime) -> str:
     Classify a scan into a DTR slot based on its time of day:
         AM In  : 12:00 AM - 11:59 AM   (0     - 719 minutes)
         AM Out : 12:00 PM - 12:29 PM   (720   - 749 minutes)
-        PM In  : 12:30 PM - 12:59 PM   (750   - 779 minutes)
-        PM Out : 1:00 PM  - 11:59 PM   (780   - 1439 minutes)
+        PM In  : 12:30 PM - 1:00  PM   (750   - 780 minutes)
+        PM Out : 1:01 PM  - 11:59 PM   (781   - 1439 minutes)
     """
     minutes = t.hour * 60 + t.minute
     if minutes <= 719:
         return "am_in"
     elif minutes <= 749:
         return "am_out"
-    elif minutes <= 779:
+    elif minutes <= 780:
         return "pm_in"
     else:
         return "pm_out"
