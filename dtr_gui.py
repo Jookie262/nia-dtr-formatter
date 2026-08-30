@@ -19,7 +19,6 @@ If double-clicking the file doesn't work on your computer, right-click
 the file and choose "Open with" > Python.
 """
 
-from logging import root
 import os
 import sys
 import calendar
@@ -29,10 +28,9 @@ from datetime import date
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-# Reuse all the logic already built and tested in generate_simple_dtr.py /
-# generate_nia_dtr.py.
-import generate_simple_dtr
-import generate_nia_dtr
+# Import the OOP-based processors
+from generate_simple_dtr import SimpleDTRProcessor
+from generate_nia_dtr import NIADTRProcessor
 
 
 class SimpleDTRTab(tk.Frame):
@@ -157,18 +155,15 @@ class SimpleDTRTab(tk.Frame):
 
     def _run_generation(self, csv_path, filename):
         try:
-            output_dir = "output"
-            os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(output_dir, filename)
-
-            grouped = generate_simple_dtr.load_and_group(csv_path)
-            if not grouped:
-                raise ValueError("No personnel records were found in this CSV file.")
-
-            names = generate_simple_dtr.build_combined_pdf(grouped, output_path)
+            processor = SimpleDTRProcessor()
+            output_path = processor.generate(csv_path, filename)
+            
+            # Get the number of personnel from the generated PDF
+            # We'll count by loading and grouping
+            grouped = processor.load_and_group(csv_path)
             full_path = os.path.abspath(output_path)
 
-            self.after(0, self._on_success, full_path, len(names))
+            self.after(0, self._on_success, full_path, len(grouped))
         except Exception as e:
             error_detail = traceback.format_exc()
             self.after(0, self._on_error, str(e), error_detail)
@@ -364,20 +359,16 @@ class NIADTRTab(tk.Frame):
 
     def _run_generation(self, csv_path, year, month, half, filename):
         try:
-            output_dir = "output"
-            os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(output_dir, filename)
-
-            grouped = generate_simple_dtr.load_and_group(csv_path)
-            if not grouped:
-                raise ValueError("No personnel records were found in this CSV file.")
-
-            period_dates = generate_nia_dtr.get_period_dates(year, month, half)
-            names = generate_nia_dtr.build_combined_pdf(grouped, period_dates, output_path)
+            processor = NIADTRProcessor()
+            output_path = processor.generate(csv_path, year, month, half, filename)
+            
+            # Get period info and personnel count
+            grouped = processor.load_and_group(csv_path)
+            period_dates = processor.get_period_dates(year, month, half)
+            period_lbl = processor.period_label(period_dates)
             full_path = os.path.abspath(output_path)
-            period_lbl = generate_nia_dtr.period_label(period_dates)
 
-            self.after(0, self._on_success, full_path, len(names), period_lbl)
+            self.after(0, self._on_success, full_path, len(grouped), period_lbl)
         except Exception as e:
             error_detail = traceback.format_exc()
             self.after(0, self._on_error, str(e), error_detail)
