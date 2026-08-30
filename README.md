@@ -1,6 +1,6 @@
 # NIA DTR Formatter
 
-A Python-based attendance-to-DTR generator for creating Daily Time Record (DTR) PDFs from raw employee scan logs. The project supports both a simple DTR format and the NIA Regional Office VI DTR form, and it includes a desktop GUI for easier use.
+A Python-based attendance-to-DTR generator for creating Daily Time Record (DTR) PDFs from raw employee scan logs. The project uses Object-Oriented Programming (OOP) to provide both a simple DTR format and the NIA Regional Office VI DTR form, with a desktop GUI for easier use.
 
 ## Overview
 
@@ -10,16 +10,37 @@ The tool can generate:
 
 - Simple DTR PDFs: one page per employee with a date-by-date AM/PM entry table.
 - NIA DTR PDFs: one NIA-formatted page per employee for a selected half-month period.
+- Raw DTR PDFs: one page per employee showing raw timestamp and name entries without AM/PM classification.
 - GUI desktop app: a Tkinter interface for selecting CSV files and generating output without using the CLI.
+
+## Architecture
+
+The project is built using Object-Oriented Programming with a base class and concrete implementations:
+
+- **`DTRProcessor`** (base class in `generate_dtr.py`) – provides shared time calculation logic and core functionality
+- **`SimpleDTRProcessor`** (in `generate_simple_dtr.py`) – implements simple DTR PDF generation
+- **`NIADTRProcessor`** (in `generate_nia_dtr.py`) – implements NIA-formatted DTR generation
+- **`RawDTRProcessor`** (in `generate_raw_dtr.py`) – implements raw DTR PDF generation with minimal formatting
+
+This design eliminates code duplication and makes the codebase more maintainable and extensible.
 
 ## Project Files
 
-- `generate_dtr.py` – core logic for simple DTR generation.
-- `generate_nia_dtr.py` – NIA-formatted DTR generation for a half-month period.
+- `generate_dtr.py` – base `DTRProcessor` class with shared time calculation logic.
+- `generate_simple_dtr.py` – `SimpleDTRProcessor` for simple DTR PDF generation.
+- `generate_nia_dtr.py` – `NIADTRProcessor` for NIA-formatted DTR generation.
+- `generate_raw_dtr.py` – `RawDTRProcessor` for raw DTR PDF generation (timestamps and names only).
 - `dtr_gui.py` – desktop GUI that wraps both generators.
 - `sample/sample.csv` – example input CSV.
 - `output/` – generated PDF output folder.
 - `img/` – logo assets used by the NIA form.
+
+### Documentation
+
+- `OOP_ARCHITECTURE.md` – detailed explanation of the class hierarchy, methods, and design.
+- `USAGE_GUIDE.md` – practical examples and code samples for using the classes.
+- `REFACTORING_SUMMARY.md` – summary of changes and improvements made.
+- `GUI_INTEGRATION_GUIDE.md` – guide for updating the GUI to use the new OOP classes.
 
 ## Requirements
 
@@ -66,76 +87,107 @@ Example:
 
 ## How It Works
 
-### 1. Simple DTR generation
+### Core Architecture
 
-The script in `generate_dtr.py`:
+The project uses a base class `DTRProcessor` that encapsulates all time calculation logic, with two concrete implementations for different DTR formats:
 
-- loads the CSV,
-- strips and normalizes column names,
-- groups entries by employee name and date,
-- sorts timestamps per date,
-- classifies each scan into time slots:
-  - AM In: 12:00 AM to 11:59 AM
-  - AM Out: 12:00 PM to 12:29 PM
-  - PM In: 12:30 PM to 1:00 PM
-  - PM Out: 1:01 PM to 11:59 PM
-- chooses the correct scan for each slot depending on the number of scans in the day.
+**Base Class Methods:**
 
-If a day has 5 or more scans, the latest scan in each slot is used. Otherwise, the script keeps the earliest scan for the "In" slots and the latest scan for the "Out" slots.
+- `load_and_group(csv_path)` – loads CSV and groups scans by person and date
+- `classify_scan(t)` – classifies a scan datetime into time slots (AM In/Out, PM In/Out)
+- `format_time(t)` – formats datetime into readable time string
+- `compute_slots_for_date(scans)` – computes AM/PM slots for a single date
+- `calculate_total_hours()` – calculates total working hours
+- `compute_row(date, scans)` – complete row computation with all details
+- `generate()` – abstract method implemented by subclasses for PDF generation
 
-The generated PDF contains:
+**Time Slot Classification:**
 
-- a title/header,
-- a table with Date, AM In, AM Out, PM In, and PM Out,
-- missing-scan notes where applicable,
-- one page per employee.
+All scan times are classified into these categories:
 
-### 2. NIA DTR generation
+- **AM In**: 12:00 AM - 11:59 AM
+- **AM Out**: 12:00 PM - 12:29 PM
+- **PM In**: 12:30 PM - 1:00 PM
+- **PM Out**: 1:01 PM - 11:59 PM
 
-The script in `generate_nia_dtr.py` creates a formal NIA Regional Office VI DTR page for a selected period:
+**Duplicate Scan Handling:**
 
-- 1st half of the month: days 1 to 15
-- 2nd half of the month: days 16 to end of month
+- If 5+ scans on a day: Keep the **latest** scan in each slot
+- If fewer than 5 scans: Keep **earliest** for "In" slots, **latest** for "Out" slots
 
-It writes one PDF page per employee and includes:
+### 1. SimpleDTRProcessor
 
-- NIA/agency header with logos,
-- employee name,
-- date generated,
-- office hours section,
-- daily table rows for all dates in the selected period,
-- blank tardiness/undertime fields for manual input,
-- certification and signature areas.
+The `SimpleDTRProcessor` class generates a simple DTR format:
 
-### 3. Desktop app
+- Loads CSV data using inherited methods
+- Processes each employee's scans
+- Generates one PDF page per employee (alphabetical order)
+- Includes date table with AM/PM in/out columns
+- Shows missing-scan notes where applicable
 
-Running `dtr_gui.py` opens a Tkinter window with two tabs:
+### 2. NIADTRProcessor
 
-- Simple DTR
-- NIA DTR
+The `NIADTRProcessor` class generates a formal NIA Regional Office VI DTR form:
 
-The GUI lets you:
+- Supports two half-month periods: days 1-15 and days 16-end of month
+- Includes NIA/agency header with logos
+- Shows employee information and date generated
+- Contains office hours section
+- Includes blank tardiness/undertime fields for manual input
+- Provides certification and signature areas
 
-- choose a CSV file,
-- name the output PDF,
-- generate a DTR file,
-- open the output folder.
+### 3. RawDTRProcessor
+
+The `RawDTRProcessor` class generates a raw DTR format:
+
+- Minimal formatting with just timestamps and names
+- One PDF page per employee (alphabetical order)
+- Displays raw scan entries without AM/PM slot classification
+- Useful for quick capture and reporting without complex formatting requirements
 
 ## Usage
 
-### Run the simple DTR generator from the command line
+### Using the Classes (Recommended)
+
+#### Simple DTR Generator
+
+```python
+from generate_simple_dtr import SimpleDTRProcessor
+
+processor = SimpleDTRProcessor()
+processor.generate('sample/sample.csv', 'output/simple_dtr.pdf')
+```
+
+#### NIA DTR Generator
+
+```python
+from generate_nia_dtr import NIADTRProcessor
+
+processor = NIADTRProcessor()
+# Generate for 1st half of August 2026
+processor.generate('sample/sample.csv', 2026, 8, 1, 'output/nia_dtr.pdf')
+```
+
+#### Raw DTR Generator
+
+```python
+from generate_raw_dtr import RawDTRProcessor
+
+processor = RawDTRProcessor()
+processor.generate('sample/sample.csv', 'output/raw_dtr.pdf')
+```
+
+### Command Line Interface
+
+#### Run the simple DTR generator
 
 ```bash
-python generate_dtr.py sample/sample.csv output/simple_dtr.pdf
+python generate_simple_dtr.py sample/sample.csv output/simple_dtr.pdf
 ```
 
-If no output filename is set, it defaults to:
+If no output filename is set, it defaults to `DTR_combined.pdf`.
 
-```text
-DTR_combined.pdf
-```
-
-### Run the NIA DTR generator from the command line
+#### Run the NIA DTR generator
 
 ```bash
 python generate_nia_dtr.py sample/sample.csv 2026 8 1 output/nia_dtr.pdf
@@ -149,11 +201,31 @@ Arguments:
 - `half` – `1` for days 1-15 or `2` for days 16-end of month
 - `output_filename.pdf` – optional, defaults to `NIA_DTR_combined.pdf`
 
-### Run the GUI
+#### Run the raw DTR generator
+
+```bash
+python generate_raw_dtr.py sample/sample.csv output/raw_dtr.pdf
+```
+
+If no output filename is set, it defaults to `DTR_raw_combined.pdf`.
+
+### Desktop GUI
 
 ```bash
 python dtr_gui.py
 ```
+
+Running `dtr_gui.py` opens a Tkinter window with two tabs:
+
+- **Simple DTR** – generates simple DTR PDFs
+- **NIA DTR** – generates NIA-formatted DTR PDFs
+
+The GUI lets you:
+
+- Choose a CSV file
+- Name the output PDF
+- Generate a DTR file
+- Open the output folder
 
 ## Output Behavior
 
@@ -180,10 +252,30 @@ This will create a PDF in the `output/` folder using the default file name.
 
 This project is intended for internal use in generating DTR documents from attendance logs. Use it in accordance with your organization’s policies and document requirements.
 
+## Version History
+
+**Version 2.0** (August 31, 2026)
+
+- Refactored to Object-Oriented Programming (OOP)
+- Introduced base class `DTRProcessor` for shared functionality
+- Created `SimpleDTRProcessor` and `NIADTRProcessor` concrete classes
+- Eliminated ~160 lines of duplicate code
+- Added comprehensive architecture and usage documentation
+- Improved code maintainability and extensibility
+
+**Version 1.0** (August 20, 2026)
+
+- Initial release with procedural approach
+
+## Additional Documentation
+
+For more detailed information, see:
+
+- **[OOP_ARCHITECTURE.md](OOP_ARCHITECTURE.md)** – Complete class hierarchy and method documentation
+- **[USAGE_GUIDE.md](USAGE_GUIDE.md)** – Practical code examples and usage patterns
+- **[REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md)** – Summary of refactoring changes and improvements
+- **[GUI_INTEGRATION_GUIDE.md](GUI_INTEGRATION_GUIDE.md)** – Guide for updating GUI to use new classes
+
 ## Author
 
 Created by Jolou
-
-Version: 1.0
-
-Date: August 20, 2026

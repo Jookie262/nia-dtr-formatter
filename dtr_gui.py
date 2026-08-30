@@ -4,13 +4,15 @@ DTR Generator - Simple Desktop App
 A point-and-click window for generating Daily Time Record PDFs from an
 attendance CSV file. No command line or typing required.
 
-Requires generate_simple_dtr.py and generate_nia_dtr.py to be in the same folder
-(this app reuses their CSV-reading and PDF-building logic).
+Requires generate_simple_dtr.py, generate_nia_dtr.py, and generate_raw_dtr.py
+to be in the same folder (this app reuses their CSV-reading and PDF-building logic).
 
-The window has two tabs:
+The window has three tabs:
     - "Simple DTR": the original generator (generate_simple_dtr.py logic).
     - "NIA DTR": official NIA Regional Office VI form, for a chosen
       half-month period (generate_nia_dtr.py logic).
+    - "Raw DTR": raw format that simply lists timestamps and names
+      without classification (generate_raw_dtr.py logic).
 
 To run:
     python dtr_gui.py
@@ -31,6 +33,7 @@ from tkinter import filedialog, messagebox, ttk
 # Import the OOP-based processors
 from generate_simple_dtr import SimpleDTRProcessor
 from generate_nia_dtr import NIADTRProcessor
+from generate_raw_dtr import RawDTRProcessor
 
 
 class SimpleDTRTab(tk.Frame):
@@ -398,6 +401,165 @@ class NIADTRTab(tk.Frame):
         print(detail)  # full traceback goes to console for troubleshooting
 
 
+class RawDTRTab(tk.Frame):
+    """
+    Tab for the Raw DTR format generator (generate_raw_dtr.py logic).
+    
+    Lets the user pick an attendance CSV and generates a PDF with
+    raw timestamp entries grouped by person, without AM/PM classification.
+    """
+
+    def __init__(self, parent):
+        super().__init__(parent)
+
+        self.csv_path = tk.StringVar()
+        self.output_name = tk.StringVar(value="raw_dtr_format.pdf")
+        self.status_text = tk.StringVar(value="Choose your attendance CSV file to begin.")
+
+        self._build_layout()
+
+    # ------------------------------------------------------------------ UI
+    def _build_layout(self):
+        pad = {"padx": 16, "pady": 8}
+
+        header = tk.Label(
+            self, text="Raw DTR Format",
+            font=("Segoe UI", 15, "bold")
+        )
+        header.pack(pady=(18, 2))
+
+        subheader = tk.Label(
+            self, text="Panay River Basin Integrated Development Project",
+            font=("Segoe UI", 10), fg="#555555"
+        )
+        subheader.pack(pady=(0, 16))
+
+        # --- Step 1: choose CSV file ---
+        step1 = tk.LabelFrame(self, text=" Step 1: Select attendance CSV file ",
+                               font=("Segoe UI", 9, "bold"))
+        step1.pack(fill="x", **pad)
+
+        row1 = tk.Frame(step1)
+        row1.pack(fill="x", padx=10, pady=10)
+
+        self.file_entry = tk.Entry(row1, textvariable=self.csv_path, state="readonly", width=48)
+        self.file_entry.pack(side="left", fill="x", expand=True)
+
+        browse_btn = tk.Button(row1, text="Browse...", command=self.browse_csv, width=12)
+        browse_btn.pack(side="left", padx=(8, 0))
+
+        # --- Step 2: output file name ---
+        step2 = tk.LabelFrame(self, text=" Step 2: Name your output PDF ",
+                               font=("Segoe UI", 9, "bold"))
+        step2.pack(fill="x", **pad)
+
+        row2 = tk.Frame(step2)
+        row2.pack(fill="x", padx=10, pady=10)
+
+        name_entry = tk.Entry(row2, textvariable=self.output_name, width=48)
+        name_entry.pack(side="left", fill="x", expand=True)
+
+        tk.Label(step2, text="Will be saved inside the 'output' folder next to this app.",
+                 font=("Segoe UI", 8), fg="#777777").pack(anchor="w", padx=10, pady=(0, 8))
+
+        # --- Step 3: generate ---
+        self.generate_btn = tk.Button(
+            self, text="Generate Raw DTR PDF", command=self.on_generate,
+            font=("Segoe UI", 11, "bold"), bg="#2c3e50", fg="white",
+            activebackground="#34495e", activeforeground="white",
+            height=2,
+        )
+        self.generate_btn.pack(fill="x", padx=16, pady=(6, 6))
+
+        self.progress = ttk.Progressbar(self, mode="indeterminate")
+        self.progress.pack(fill="x", padx=16, pady=(0, 6))
+
+        status_label = tk.Label(self, textvariable=self.status_text,
+                                 font=("Segoe UI", 9), fg="#333333",
+                                 wraplength=520, justify="left")
+        status_label.pack(fill="x", padx=16, pady=(4, 0))
+
+        open_folder_btn = tk.Button(self, text="Open output folder",
+                                     command=self.open_output_folder, width=20)
+        open_folder_btn.pack(pady=(10, 0))
+
+        footer_label = tk.Label(
+            self, text="Created by Jolou - August 20, 2026 (v.1.0)",
+            font=("Segoe UI", 9)
+        )
+
+        footer_label.pack(side="bottom", pady=5)
+
+    # ------------------------------------------------------------- actions
+    def browse_csv(self):
+        path = filedialog.askopenfilename(
+            title="Select attendance CSV file",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if path:
+            self.csv_path.set(path)
+            self.status_text.set(f"Selected: {os.path.basename(path)}")
+
+    def open_output_folder(self):
+        open_output_folder()
+
+    def on_generate(self):
+        csv_path = self.csv_path.get().strip()
+        if not csv_path:
+            messagebox.showwarning("Missing file", "Please select an attendance CSV file first.")
+            return
+        if not os.path.isfile(csv_path):
+            messagebox.showerror("File not found", "The selected CSV file could not be found.")
+            return
+
+        filename = self.output_name.get().strip() or "raw_dtr_format.pdf"
+        filename = os.path.basename(filename)
+        if not filename.lower().endswith(".pdf"):
+            filename += ".pdf"
+
+        # Disable the button and show a busy indicator while working
+        self.generate_btn.config(state="disabled")
+        self.status_text.set("Generating... please wait.")
+        self.progress.start(12)
+
+        # Run in a background thread so the window doesn't freeze
+        thread = threading.Thread(target=self._run_generation, args=(csv_path, filename), daemon=True)
+        thread.start()
+
+    def _run_generation(self, csv_path, filename):
+        try:
+            processor = RawDTRProcessor()
+            output_path = processor.generate(csv_path, filename)
+            
+            # Get the number of personnel from the generated PDF
+            grouped = processor.load_and_group(csv_path)
+            full_path = os.path.abspath(output_path)
+
+            self.after(0, self._on_success, full_path, len(grouped))
+        except Exception as e:
+            error_detail = traceback.format_exc()
+            self.after(0, self._on_error, str(e), error_detail)
+
+    def _on_success(self, full_path, count):
+        self.progress.stop()
+        self.generate_btn.config(state="normal")
+        self.status_text.set(f"Done! {count} personnel included.\nSaved to: {full_path}")
+        messagebox.showinfo("Success", f"Raw DTR PDF generated successfully!\n\n"
+                                        f"{count} personnel included.\n\nSaved to:\n{full_path}")
+
+    def _on_error(self, message, detail):
+        self.progress.stop()
+        self.generate_btn.config(state="normal")
+        self.status_text.set(f"Something went wrong: {message}")
+        messagebox.showerror(
+            "Error",
+            f"Could not generate the Raw DTR PDF.\n\n{message}\n\n"
+            f"Please check that your CSV file has the correct columns "
+            f"(Timestamp, Name) and try again."
+        )
+        print(detail)  # full traceback goes to console for troubleshooting
+
+
 def open_output_folder():
     """Open (or create) the shared 'output' folder next to this app."""
     output_dir = os.path.join(os.getcwd(), "output")
@@ -438,7 +600,9 @@ class DTRApp(tk.Tk):
 
         simple_tab = SimpleDTRTab(notebook)
         nia_tab = NIADTRTab(notebook)
+        raw_tab = RawDTRTab(notebook)
 
+        notebook.add(raw_tab, text="Raw DTR")
         notebook.add(simple_tab, text="Simple DTR")
         notebook.add(nia_tab, text="NIA DTR")
 
