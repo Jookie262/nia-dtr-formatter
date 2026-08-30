@@ -4,7 +4,7 @@ format Daily Time Record PDFs per personnel, for a selected half-month
 period, from a raw attendance scan log CSV.
 
 Reuses the same CSV-reading and AM/PM In/Out slot-classification logic as
-generate_dtr.py, but lays the page out to match the official NIA DTR form:
+generate_simple_dtr.py, but lays the page out to match the official NIA DTR form:
   - Half-month period header, e.g. "2026-07-16 -- 2026-07-31"
   - Every calendar day in that period is listed as a row, including days
     with no scans (blank row) and weekends -- not only days with scans
@@ -31,8 +31,8 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 # Reuse the CSV loading and per-scan slot classification already built
-# and tested in generate_dtr.py.
-import generate_dtr
+# and tested in generate_simple_dtr.py.
+import generate_simple_dtr
 
 DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -89,7 +89,7 @@ def compute_slots_for_date(scans: list) -> dict:
     """
     Given a list of scan datetimes for a single date (possibly empty),
     classify them into AM In/Out and PM In/Out using the same slot rules
-    as generate_dtr.classify_scan, and return formatted time strings
+    as generate_simple_dtr.classify_scan, and return formatted time strings
     ("" if that slot has no scan).
     """
     if not scans:
@@ -97,7 +97,7 @@ def compute_slots_for_date(scans: list) -> dict:
 
     buckets = {"am_in": [], "am_out": [], "pm_in": [], "pm_out": []}
     for s in scans:
-        buckets[generate_dtr.classify_scan(s)].append(s)
+        buckets[generate_simple_dtr.classify_scan(s)].append(s)
 
     if len(scans) >= 5:
         am_in = max(buckets["am_in"]) if buckets["am_in"] else None
@@ -309,7 +309,7 @@ def build_combined_pdf(grouped: dict, period_dates: list, output_path: str) -> l
     """
     Build one PDF with one NIA-format page per person, for the given
     period. `grouped` is the {name: {date: [scans]}} dict returned by
-    generate_dtr.load_and_group. Only dates that fall inside period_dates
+    generate_simple_dtr.load_and_group. Only dates that fall inside period_dates
     are used; days with no scans still get a row.
     """
     pdf_title = os.path.splitext(os.path.basename(output_path))[0]
@@ -359,7 +359,7 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, filename)
 
-    grouped = generate_dtr.load_and_group(csv_path)
+    grouped = generate_simple_dtr.load_and_group(csv_path)
     period_dates = get_period_dates(year, month, half)
     names = build_combined_pdf(grouped, period_dates, output_path)
 

@@ -20,7 +20,7 @@ Output: a single PDF with one page per person (alphabetical by name),
 saved to the filename you specify.
 
 Usage:
-    python generate_dtr.py <input_csv> [output_filename.pdf]
+    python generate_simple_dtr.py <input_csv> [output_filename.pdf]
 """
 
 import sys
@@ -242,7 +242,7 @@ def build_combined_pdf(grouped: dict, output_path: str):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python generate_dtr.py <input_csv> [output_filename.pdf]")
+        print("Usage: python generate_simple_dtr.py <input_csv> [output_filename.pdf]")
         sys.exit(1)
 
     csv_path = sys.argv[1]

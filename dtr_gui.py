@@ -4,11 +4,11 @@ DTR Generator - Simple Desktop App
 A point-and-click window for generating Daily Time Record PDFs from an
 attendance CSV file. No command line or typing required.
 
-Requires generate_dtr.py and generate_nia_dtr.py to be in the same folder
+Requires generate_simple_dtr.py and generate_nia_dtr.py to be in the same folder
 (this app reuses their CSV-reading and PDF-building logic).
 
 The window has two tabs:
-    - "Simple DTR": the original generator (generate_dtr.py logic).
+    - "Simple DTR": the original generator (generate_simple_dtr.py logic).
     - "NIA DTR": official NIA Regional Office VI form, for a chosen
       half-month period (generate_nia_dtr.py logic).
 
@@ -29,14 +29,14 @@ from datetime import date
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-# Reuse all the logic already built and tested in generate_dtr.py /
+# Reuse all the logic already built and tested in generate_simple_dtr.py /
 # generate_nia_dtr.py.
-import generate_dtr
+import generate_simple_dtr
 import generate_nia_dtr
 
 
 class SimpleDTRTab(tk.Frame):
-    """Tab for the original Simple DTR generator (generate_dtr.py logic)."""
+    """Tab for the original Simple DTR generator (generate_simple_dtr.py logic)."""
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -161,11 +161,11 @@ class SimpleDTRTab(tk.Frame):
             os.makedirs(output_dir, exist_ok=True)
             output_path = os.path.join(output_dir, filename)
 
-            grouped = generate_dtr.load_and_group(csv_path)
+            grouped = generate_simple_dtr.load_and_group(csv_path)
             if not grouped:
                 raise ValueError("No personnel records were found in this CSV file.")
 
-            names = generate_dtr.build_combined_pdf(grouped, output_path)
+            names = generate_simple_dtr.build_combined_pdf(grouped, output_path)
             full_path = os.path.abspath(output_path)
 
             self.after(0, self._on_success, full_path, len(names))
@@ -368,7 +368,7 @@ class NIADTRTab(tk.Frame):
             os.makedirs(output_dir, exist_ok=True)
             output_path = os.path.join(output_dir, filename)
 
-            grouped = generate_dtr.load_and_group(csv_path)
+            grouped = generate_simple_dtr.load_and_group(csv_path)
             if not grouped:
                 raise ValueError("No personnel records were found in this CSV file.")
 
@@ -421,12 +421,23 @@ def open_output_folder():
     except Exception:
         messagebox.showinfo("Output folder", f"Output folder is located at:\n{output_dir}")
 
+def resource_path(relative_path):
+    """Get the correct path for development and PyInstaller."""
+    try:
+        base_path = sys._MEIPASS
+    except AttributeError:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
 
 class DTRApp(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.iconbitmap("img/nia_icon.ico")
+        icon_path = resource_path("img/nia_icon.ico")
+        self.iconbitmap(icon_path)
+
         self.title("NIA DTR Generator - Panay River Basin Integrated Development Project")
         self.geometry("600x600")
         self.resizable(False, False)
