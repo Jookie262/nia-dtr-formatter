@@ -20,15 +20,15 @@ class DTRProcessor(ABC):
     Abstract base class for DTR generation. Handles:
     - CSV loading and grouping scans by person and date
     - Scan classification into AM In/Out and PM In/Out slots
-    - Slot time extraction (earliest for In, latest for Out)
+    - Slot time extraction (earliest AM In, latest AM Out, and earliest/latest PM)
     - Time formatting and total hour calculation
     """
 
     # Time slot boundaries (in minutes from midnight)
     AM_IN_END = 720      # 12:00 PM (start of AM Out)
     AM_OUT_START = 720   # 12:00 PM
-    AM_OUT_END = 750     # 12:30 PM (start of PM In)
-    PM_IN_START = 750    # 12:30 PM
+    AM_OUT_END = 751     # 12:31 PM (start of PM In)
+    PM_IN_START = 751    # 12:31 PM
     PM_IN_END = 810      # 1:30 PM (start of PM Out)
     PM_OUT_START = 811   # 1:31 PM
 
@@ -85,9 +85,8 @@ class DTRProcessor(ABC):
         
         Time ranges:
             AM In  : 12:00 AM - 11:59 AM   (0     - 719 minutes)
-            AM Out : 12:00 PM - 12:29 PM   (720   - 749 minutes)
-            PM In  : 12:30 PM - 1:30  PM   (750   - 810 minutes)
-            PM Out : 1:31 PM  - 11:59 PM   (811   - 1439 minutes)
+            AM Out : 12:00 PM - 12:30 PM   (720   - 750 minutes)
+            PM In/Out pool: 12:31 PM - 11:59 PM (751 - 1439 minutes)
             
         Args:
             t: datetime object to classify
@@ -98,7 +97,7 @@ class DTRProcessor(ABC):
         minutes = t.hour * 60 + t.minute
         if minutes <= 719:
             return "am_in"
-        elif minutes <= 749:
+        elif minutes <= 750:
             return "am_out"
         elif minutes <= 810:
             return "pm_in"
@@ -119,6 +118,28 @@ class DTRProcessor(ABC):
         return t.strftime("%I:%M %p").lstrip("0") if t else "-"
 
     @staticmethod
+    def _select_slot_datetimes(scans: list) -> tuple:
+        """Select slots after ignoring repeated timestamps."""
+        scans = sorted(set(scans))
+        buckets = {"am_in": [], "am_out": []}
+        pm_scans = []
+        for scan in scans:
+            slot = DTRProcessor.classify_scan(scan)
+            if slot == "am_in":
+                buckets["am_in"].append(scan)
+            elif slot == "am_out":
+                buckets["am_out"].append(scan)
+            else:
+                pm_scans.append(scan)
+
+        am_in = min(buckets["am_in"]) if buckets["am_in"] else None
+        am_out = max(buckets["am_out"]) if buckets["am_out"] else None
+        pm_in = min(pm_scans) if pm_scans else None
+        pm_out = max(pm_scans) if pm_scans else None
+        am_count = len(buckets["am_in"]) + len(buckets["am_out"])
+        return am_in, am_out, pm_in, pm_out, am_count, len(pm_scans)
+
+    @staticmethod
     def compute_slots_for_date(scans: list) -> dict:
         """
         Given a list of scan datetimes for a single date (possibly empty),
@@ -126,10 +147,9 @@ class DTRProcessor(ABC):
         formatted time strings.
         
         Selection logic:
-            - If 5+ scans in a day (duplicates/accidental scans):
-              always keep the LATEST scan in each slot
-            - If fewer than 5 scans (normal day):
-              keep EARLIEST for "In" slots, LATEST for "Out" slots
+            - Keep the EARLIEST AM scan as AM In and the LATEST noon scan as AM Out
+            - Treat all scans from 12:31 PM onward as one PM pool
+            - Keep the EARLIEST PM scan as PM In and the LATEST as PM Out
               
         Args:
             scans: List of datetime objects for a single date
@@ -141,28 +161,18 @@ class DTRProcessor(ABC):
         if not scans:
             return {"am_in": "", "am_out": "", "pm_in": "", "pm_out": ""}
 
-        buckets = {"am_in": [], "am_out": [], "pm_in": [], "pm_out": []}
-        for s in scans:
-            buckets[DTRProcessor.classify_scan(s)].append(s)
+        am_in, am_out, pm_in, pm_out, am_count, pm_count = (
+            DTRProcessor._select_slot_datetimes(scans)
+        )
 
-        if len(scans) >= 5:
-            # Many scans that day -> always keep the latest scan in each slot
-            am_in = max(buckets["am_in"]) if buckets["am_in"] else None
-            am_out = max(buckets["am_out"]) if buckets["am_out"] else None
-            pm_in = max(buckets["pm_in"]) if buckets["pm_in"] else None
-            pm_out = max(buckets["pm_out"]) if buckets["pm_out"] else None
-        else:
-            # Normal day -> earliest for "In" slots, latest for "Out" slots
-            am_in = min(buckets["am_in"]) if buckets["am_in"] else None
-            am_out = max(buckets["am_out"]) if buckets["am_out"] else None
-            pm_in = min(buckets["pm_in"]) if buckets["pm_in"] else None
-            pm_out = max(buckets["pm_out"]) if buckets["pm_out"] else None
+        am_out_display = "00:00" if am_count == 1 else DTRProcessor.format_time(am_out)
+        pm_out_display = "00:00" if pm_count == 1 else DTRProcessor.format_time(pm_out)
 
         return {
             "am_in": DTRProcessor.format_time(am_in),
-            "am_out": DTRProcessor.format_time(am_out),
+            "am_out": am_out_display,
             "pm_in": DTRProcessor.format_time(pm_in),
-            "pm_out": DTRProcessor.format_time(pm_out),
+            "pm_out": pm_out_display,
         }
 
     @staticmethod
@@ -224,20 +234,9 @@ class DTRProcessor(ABC):
         """
         date_str = date.strftime("%m/%d/%Y")
 
-        buckets = {"am_in": [], "am_out": [], "pm_in": [], "pm_out": []}
-        for s in scans:
-            buckets[DTRProcessor.classify_scan(s)].append(s)
-
-        if len(scans) >= 5:
-            am_in = max(buckets["am_in"]) if buckets["am_in"] else None
-            am_out = max(buckets["am_out"]) if buckets["am_out"] else None
-            pm_in = max(buckets["pm_in"]) if buckets["pm_in"] else None
-            pm_out = max(buckets["pm_out"]) if buckets["pm_out"] else None
-        else:
-            am_in = min(buckets["am_in"]) if buckets["am_in"] else None
-            am_out = max(buckets["am_out"]) if buckets["am_out"] else None
-            pm_in = min(buckets["pm_in"]) if buckets["pm_in"] else None
-            pm_out = max(buckets["pm_out"]) if buckets["pm_out"] else None
+        am_in, am_out, pm_in, pm_out, am_count, pm_count = (
+            DTRProcessor._select_slot_datetimes(scans)
+        )
 
         total_hours, missing = DTRProcessor.calculate_total_hours(
             am_in, am_out, pm_in, pm_out
@@ -250,9 +249,9 @@ class DTRProcessor(ABC):
         return {
             "date": date_str,
             "am_in": DTRProcessor.format_time(am_in),
-            "am_out": DTRProcessor.format_time(am_out),
+            "am_out": "00:00" if am_count == 1 else DTRProcessor.format_time(am_out),
             "pm_in": DTRProcessor.format_time(pm_in),
-            "pm_out": DTRProcessor.format_time(pm_out),
+            "pm_out": "00:00" if pm_count == 1 else DTRProcessor.format_time(pm_out),
             "total": f"{total_hours:.2f}",
             "note": note,
         }

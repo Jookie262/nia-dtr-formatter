@@ -106,14 +106,13 @@ The project uses a base class `DTRProcessor` that encapsulates all time calculat
 All scan times are classified into these categories:
 
 - **AM In**: 12:00 AM - 11:59 AM
-- **AM Out**: 12:00 PM - 12:29 PM
-- **PM In**: 12:30 PM - 1:00 PM
-- **PM Out**: 1:01 PM - 11:59 PM
+- **AM Out**: 12:00 PM - 12:30 PM
+- **PM In/Out pool**: 12:31 PM - 11:59 PM; the earliest scan is PM In and the latest scan is PM Out
 
-**Duplicate Scan Handling:**
+**Scan Selection:**
 
-- If 5+ scans on a day: Keep the **latest** scan in each slot
-- If fewer than 5 scans: Keep **earliest** for "In" slots, **latest** for "Out" slots
+- AM In uses the earliest scan before noon, and AM Out uses the latest scan from noon through 12:30 PM
+- PM In/Out uses all scans from 12:31 PM onward: the earliest is PM In and the latest is PM Out
 
 ### 1. SimpleDTRProcessor
 

@@ -8,13 +8,8 @@ Expected CSV columns: Index, Timestamp, ID, Name, Details
     position/order), so employees with only 1, 2, or 3 scans in a day
     are handled correctly:
         AM In  : 12:00 AM - 11:59 AM
-        AM Out : 12:00 PM - 12:29 PM
-        PM In  : 12:30 PM - 1:00  PM
-        PM Out : 1:01 PM  - 11:59 PM
-    If multiple scans fall in the same slot on a day with 5 or more total
-    scans, the latest scan in that slot is kept. On days with fewer than
-    5 scans, the earliest scan is kept for "In" slots and the latest for
-    "Out" slots (standard behavior).
+        AM Out : 12:00 PM - 12:30 PM
+        PM In/Out pool: 12:31 PM - 11:59 PM; earliest is PM In, latest PM Out
 
 Output: a single PDF with one page per person (alphabetical by name),
 saved to the filename you specify.

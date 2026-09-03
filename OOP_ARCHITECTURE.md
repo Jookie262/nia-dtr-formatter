@@ -25,7 +25,7 @@ Abstract base class that provides all the common functionality for DTR processin
 
 - **AM In**: 12:00 AM - 11:59 AM
 - **AM Out**: 12:00 PM - 12:29 PM
-- **PM In**: 12:30 PM - 1:00 PM
+- **PM In/Out pool**: 12:31 PM - 11:59 PM; earliest is PM In and latest is PM Out
 - **PM Out**: 1:01 PM - 11:59 PM
 
 **Duplicate Scan Handling:**

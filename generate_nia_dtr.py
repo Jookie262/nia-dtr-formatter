@@ -63,10 +63,9 @@ class NIADTRProcessor(DTRProcessor):
         formatted time strings.
         
         Selection logic:
-            - If 5+ scans in a day (duplicates/accidental scans):
-              always keep the LATEST scan in each slot
-            - If fewer than 5 scans (normal day):
-              keep EARLIEST for "In" slots, LATEST for "Out" slots
+            - Keep the EARLIEST AM scan as AM In and the LATEST noon scan as AM Out
+            - Treat all scans from 12:31 PM onward as one PM pool
+            - Keep the EARLIEST PM scan as PM In and the LATEST as PM Out
               
         Args:
             scans: List of datetime objects for a single date
@@ -81,22 +80,9 @@ class NIADTRProcessor(DTRProcessor):
             return {"am_in": "", "am_out": "", "pm_in": "", "pm_out": ""}
 
         # Date has at least one scan - process the slots
-        buckets = {"am_in": [], "am_out": [], "pm_in": [], "pm_out": []}
-        for s in scans:
-            buckets[DTRProcessor.classify_scan(s)].append(s)
-
-        if len(scans) >= 5:
-            # Many scans that day -> always keep the latest scan in each slot
-            am_in = max(buckets["am_in"]) if buckets["am_in"] else None
-            am_out = max(buckets["am_out"]) if buckets["am_out"] else None
-            pm_in = max(buckets["pm_in"]) if buckets["pm_in"] else None
-            pm_out = max(buckets["pm_out"]) if buckets["pm_out"] else None
-        else:
-            # Normal day -> earliest for "In" slots, latest for "Out" slots
-            am_in = min(buckets["am_in"]) if buckets["am_in"] else None
-            am_out = max(buckets["am_out"]) if buckets["am_out"] else None
-            pm_in = min(buckets["pm_in"]) if buckets["pm_in"] else None
-            pm_out = max(buckets["pm_out"]) if buckets["pm_out"] else None
+        am_in, am_out, pm_in, pm_out, am_count, pm_count = (
+            DTRProcessor._select_slot_datetimes(scans)
+        )
 
         # Format times: show actual time if available, "00:00" if slot is missing but date has scans
         def fmt(t):
@@ -104,9 +90,9 @@ class NIADTRProcessor(DTRProcessor):
 
         return {
             "am_in": fmt(am_in),
-            "am_out": fmt(am_out),
+            "am_out": "00:00" if am_count == 1 else fmt(am_out),
             "pm_in": fmt(pm_in),
-            "pm_out": fmt(pm_out),
+            "pm_out": "00:00" if pm_count == 1 else fmt(pm_out),
         }
 
     @staticmethod
