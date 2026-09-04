@@ -2,19 +2,21 @@
 
 ## Changes Made to `dtr_gui.py`
 
-The GUI has been successfully updated to use the new OOP-based processors instead of procedural functions.
+The GUI now uses PyQt6 and the NIA processor as its single generation format.
 
 ### Issues Fixed
 
-1. **Removed Invalid Import**
-   - ❌ Removed: `from logging import root` (unused import)
+1. **Replaced the Tkinter tabbed interface**
 
-2. **Updated Imports to Use OOP Classes**
-   - ❌ Old: `import generate_simple_dtr` and `import generate_nia_dtr`
-   - ✅ New: `from generate_simple_dtr import SimpleDTRProcessor`
-   - ✅ New: `from generate_nia_dtr import NIADTRProcessor`
+- Removed the Simple DTR, Raw DTR, and NIA DTR tabs.
+- Added one NIA DTR workspace with settings on the left and a PDF preview on the right.
 
-3. **Refactored SimpleDTRTab.\_run_generation() Method**
+2. **Updated the GUI toolkit and processor import**
+
+- ✅ Uses PyQt6 widgets and Qt PDF preview components.
+- ✅ Uses `from generate_nia_dtr import NIADTRProcessor`.
+
+3. **Runs generation in a worker thread**
    - ❌ Old approach:
      ```python
      grouped = generate_simple_dtr.load_and_group(csv_path)
@@ -26,7 +28,7 @@ The GUI has been successfully updated to use the new OOP-based processors instea
      output_path = processor.generate(csv_path, filename)
      ```
 
-4. **Refactored NIADTRTab.\_run_generation() Method**
+4. **Keeps the NIA period workflow**
    - ❌ Old approach:
      ```python
      grouped = generate_simple_dtr.load_and_group(csv_path)
@@ -68,16 +70,7 @@ All changes verified:
 
 ## GUI Functionality
 
-The GUI maintains all original functionality:
-
-**Simple DTR Tab:**
-
-- Select CSV file
-- Name output PDF
-- Generate Simple DTR format PDF
-- Open output folder
-
-**NIA DTR Tab:**
+The GUI provides:
 
 - Select CSV file
 - Choose month, year, and period (1st half or 2nd half)
@@ -85,7 +78,7 @@ The GUI maintains all original functionality:
 - Generate NIA DTR format PDF
 - Open output folder
 
-Both tabs use the new OOP processors under the hood while maintaining the same user interface and experience.
+The generated PDF is loaded into the integrated preview after successful generation.
 
 ---
 

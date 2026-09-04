@@ -27,7 +27,8 @@ from reportlab.lib.units import inch
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
-    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
+    BaseDocTemplate, Frame, PageTemplate, SimpleDocTemplate, Table, TableStyle,
+    Paragraph, Spacer, PageBreak, FrameBreak, Image
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
@@ -49,9 +50,11 @@ BAGONG_PILIPINAS_LOGO_PATH = os.path.join(IMG_DIR, "bagong_pilipinas.png")
 
 LOGO_SIZE = 0.55 * inch  # logos are drawn at this width/height
 NIA_PAGE_WIDTH = 8.5 * inch
-NIA_PAGE_HEIGHT = 6.5 * inch
+NIA_FORM_HEIGHT = 6.5 * inch
+NIA_SHEET_HEIGHT = 13 * inch
 BORDER_HORIZONTAL_INSET = 0.40 * inch
 BORDER_VERTICAL_INSET = 0.18 * inch
+CUT_LINE_VERTICAL_OFFSET = -0.05 * inch
 FOOTER_BOTTOM_PADDING = 0.05 * inch
 
 
@@ -108,7 +111,7 @@ class NIADTRProcessor(DTRProcessor):
     """
 
     @staticmethod
-    def compute_slots_for_date(scans: list) -> dict:
+    def compute_slots_for_date(scans: list, time_format: str = "24") -> dict:
         """
         Override of base class method to return "00:00" for empty slots (only if date has scans).
         Given a list of scan datetimes for a single date (possibly empty),
@@ -139,7 +142,9 @@ class NIADTRProcessor(DTRProcessor):
 
         # Format times: show actual time if available, "00:00" if slot is missing but date has scans
         def fmt(t):
-            return t.strftime("%I:%M %p").lstrip("0") if t else "00:00"
+            if not t:
+                return "00:00"
+            return t.strftime("%I:%M %p").lstrip("0") if time_format == "12" else t.strftime("%H:%M")
 
         return {
             "am_in": fmt(am_in),
@@ -187,22 +192,23 @@ class NIADTRProcessor(DTRProcessor):
         return f"{start.strftime('%Y-%m-%d')} -- {end.strftime('%Y-%m-%d')}"
 
     def build_person_story(self, name: str, period_dates: list, dates_scans: dict,
-                            period_lbl: str, date_generated: str, styles) -> list:
+                            period_lbl: str, date_generated: str, styles,
+                            time_format: str = "24") -> list:
         """Build the flowable content for one person's NIA-format DTR page."""
 
         agency_style = ParagraphStyle(
-            "NIAAgency", parent=styles["Normal"], fontSize=10, alignment=TA_LEFT,
-            fontName=CAMBRIA_FONT, leading=13,
+            "NIAAgency", parent=styles["Normal"], fontSize=9.5, alignment=TA_LEFT,
+            fontName=CAMBRIA_FONT, leading=12,
         )
         agency_cambria_bold_style = ParagraphStyle(
             "NIAAgencyCambriaBold", parent=agency_style,
-            fontName=CAMBRIA_BOLD_FONT,
+            fontName=CAMBRIA_BOLD_FONT
         )
         agency_bold_style = ParagraphStyle(
-            "NIAAgencyBold", parent=agency_style, fontName=TRAJAN_FONT, fontSize=10,
+            "NIAAgencyBold", parent=agency_style, fontName=TRAJAN_FONT, fontSize=9.5
         )
         regional_style = ParagraphStyle(
-            "NIARegional", parent=agency_style, fontName=TRAJAN_FONT, fontSize=10,
+            "NIARegional", parent=agency_style, fontName=TRAJAN_FONT, fontSize=9.5, 
         )
         title_style = ParagraphStyle(
             "NIATitle", parent=styles["Normal"], fontSize=11, alignment=TA_CENTER,
@@ -218,7 +224,7 @@ class NIADTRProcessor(DTRProcessor):
             "NIADateGenerated", parent=info_style, alignment=TA_CENTER,
         )
         office_hours_style = ParagraphStyle(
-            "NIAOfficeHours", parent=info_style, fontSize=7.5, leading=11,
+            "NIAOfficeHours", parent=info_style, fontSize=7.5, leading=9.5,
         )
         cert_style = ParagraphStyle(
             "NIACert", parent=styles["Normal"], fontSize=8.5, alignment=TA_LEFT,
@@ -233,6 +239,7 @@ class NIADTRProcessor(DTRProcessor):
 
         # --- Agency header: NIA logo (left) | agency text (center) | Bagong Pilipinas logo (right) ---
         agency_text_cell = [
+            Spacer(1, 5),
             Paragraph("Republic of the Philippines", agency_cambria_bold_style),
             Paragraph("OFFICE OF THE PRESIDENT", agency_style),
             Paragraph("NATIONAL IRRIGATION ADMINISTRATION", agency_bold_style),
@@ -261,10 +268,23 @@ class NIADTRProcessor(DTRProcessor):
             ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]))
 
+        right_logo = Table(
+            [[bagong_pilipinas_logo if bagong_pilipinas_logo else ""]],
+            colWidths=[1.0 * inch],
+        )
+        right_logo.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+
         header_data = [[
             left_logos,
             agency_text_cell,
-            bagong_pilipinas_logo if bagong_pilipinas_logo else "",
+            right_logo,
         ]]
         header_table = Table(
             header_data,
@@ -331,7 +351,7 @@ class NIADTRProcessor(DTRProcessor):
         table_data = [header_row1, header_row2]
         for i, d in enumerate(period_dates, start=1):
             day_label = f"{i} {DAY_ABBR[d.weekday()]}"
-            slots = self.compute_slots_for_date(dates_scans.get(d, []))
+            slots = self.compute_slots_for_date(dates_scans.get(d, []), time_format)
             table_data.append([
                 d.strftime("%m/%d/%Y"),
                 day_label,
@@ -354,6 +374,7 @@ class NIADTRProcessor(DTRProcessor):
 
         table = Table(table_data, colWidths=col_widths, repeatRows=2)
         table.hAlign = "CENTER"
+        table_padding = 1.1 if len(period_dates) == 15 else 0.68
         style_cmds = [
             ("SPAN", (0, 0), (0, 1)),   # Date
             ("SPAN", (1, 0), (1, 1)),   # Day
@@ -371,8 +392,8 @@ class NIADTRProcessor(DTRProcessor):
             ("ALIGN", (1, 2), (1, -1), "LEFT"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-            ("TOPPADDING", (0, 0), (-1, -1), 1),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0.65),
+            ("TOPPADDING", (0, 0), (-1, -1), table_padding),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), table_padding),
         ]
         table.setStyle(TableStyle(style_cmds))
         story.append(table)
@@ -481,66 +502,119 @@ class NIADTRProcessor(DTRProcessor):
 
         return story
 
-    def build_combined_pdf(self, grouped: dict, period_dates: list, output_path: str) -> list:
+    def build_combined_pdf(self, grouped: dict, period_dates: list, output_path: str,
+                           time_format: str = "24", copies: int = 3) -> list:
         """
-        Build one PDF with one NIA-format page per person, for the given
-        period. `grouped` is the {name: {date: [scans]}} dict returned by
-        load_and_group. Only dates that fall inside period_dates are used;
-        days with no scans still get a row.
+        Build one PDF with the requested number of NIA-format copies per
+        person. Three copies use two forms on each 8.5 x 13 sheet and place
+        the third copy on the next sheet; one copy uses the original 8.5 x
+        6.5 form page. `grouped` is the {name: {date: [scans]}} dict returned
+        by load_and_group.
         """
+        if copies not in (1, 3):
+            raise ValueError("copies must be 1 or 3")
+
+        forms_per_sheet = 2 if copies == 3 else 1
+        sheet_height = NIA_SHEET_HEIGHT if copies == 3 else NIA_FORM_HEIGHT
+
         def draw_page_border(canvas, document):
             canvas.saveState()
             canvas.setStrokeColor(colors.black)
             canvas.setLineWidth(0.75)
-            canvas.rect(
-                BORDER_HORIZONTAL_INSET,
-                BORDER_VERTICAL_INSET,
-                document.pagesize[0] - (2 * BORDER_HORIZONTAL_INSET),
-                document.pagesize[1] - (2 * BORDER_VERTICAL_INSET),
-                stroke=1,
-                fill=0,
-            )
             canvas.setFont("Helvetica-Oblique", 7.5)
-            canvas.drawString(
-                BORDER_HORIZONTAL_INSET,
-                FOOTER_BOTTOM_PADDING,
-                "NIA-ROVI-AFD-AS-INT-Form55 Rev.01",
-            )
+            form_width = document.pagesize[0] - (2 * BORDER_HORIZONTAL_INSET)
+            form_bottoms = (0, NIA_FORM_HEIGHT) if forms_per_sheet == 2 else (0,)
+            for form_bottom in form_bottoms:
+                canvas.rect(
+                    BORDER_HORIZONTAL_INSET,
+                    form_bottom + BORDER_VERTICAL_INSET,
+                    form_width,
+                    NIA_FORM_HEIGHT - (2 * BORDER_VERTICAL_INSET),
+                    stroke=1,
+                    fill=0,
+                )
+                canvas.drawString(
+                    BORDER_HORIZONTAL_INSET,
+                    form_bottom + FOOTER_BOTTOM_PADDING,
+                    "NIA-ROVI-AFD-AS-INT-Form55 Rev.01",
+                )
+            if forms_per_sheet == 2:
+                canvas.setDash(4, 3)
+                canvas.line(
+                    BORDER_HORIZONTAL_INSET,
+                    NIA_FORM_HEIGHT + CUT_LINE_VERTICAL_OFFSET,
+                    document.pagesize[0] - BORDER_HORIZONTAL_INSET,
+                    NIA_FORM_HEIGHT + CUT_LINE_VERTICAL_OFFSET,
+                )
             canvas.restoreState()
 
         pdf_title = os.path.splitext(os.path.basename(output_path))[0]
-        doc = SimpleDocTemplate(
-            output_path,
-            pagesize=(NIA_PAGE_WIDTH, NIA_PAGE_HEIGHT),
-            topMargin=0,
-            bottomMargin=0,
-            leftMargin=0,
-            rightMargin=0,
-            title=pdf_title,
-        )
+        if copies == 3:
+            doc = BaseDocTemplate(
+                output_path,
+                pagesize=(NIA_PAGE_WIDTH, sheet_height),
+                topMargin=0,
+                bottomMargin=0,
+                leftMargin=0,
+                rightMargin=0,
+                title=pdf_title,
+            )
+            frame_width = NIA_PAGE_WIDTH
+            doc.addPageTemplates([
+                PageTemplate(
+                    id="legalDTR",
+                    frames=[
+                        Frame(0, NIA_FORM_HEIGHT, frame_width, NIA_FORM_HEIGHT,
+                              leftPadding=0, bottomPadding=0, rightPadding=0, topPadding=0),
+                        Frame(0, 0, frame_width, NIA_FORM_HEIGHT,
+                              leftPadding=0, bottomPadding=0, rightPadding=0, topPadding=0),
+                    ],
+                    onPage=draw_page_border,
+                )
+            ])
+        else:
+            doc = SimpleDocTemplate(
+                output_path,
+                pagesize=(NIA_PAGE_WIDTH, sheet_height),
+                topMargin=0,
+                bottomMargin=0,
+                leftMargin=0,
+                rightMargin=0,
+                title=pdf_title,
+            )
         styles = getSampleStyleSheet()
         lbl = self.period_label(period_dates)
         date_generated = date.today().strftime("%-d %b %Y") if os.name != "nt" else date.today().strftime("%#d %b %Y")
 
         full_story = []
         names = sorted(grouped.keys())
+        total_forms = len(names) * copies
+        form_number = 0
         for i, name in enumerate(names):
             dates_scans = grouped[name]
-            full_story.extend(
-                self.build_person_story(name, period_dates, dates_scans, lbl, date_generated, styles)
-            )
-            if i < len(names) - 1:
-                full_story.append(PageBreak())
+            for copy_number in range(copies):
+                full_story.extend(
+                    self.build_person_story(
+                        name, period_dates, dates_scans, lbl, date_generated, styles,
+                        time_format
+                    )
+                )
+                if copies == 3:
+                    form_number += 1
+                    if form_number < total_forms:
+                        full_story.append(FrameBreak())
+                elif i < len(names) - 1:
+                    full_story.append(PageBreak())
 
-        doc.build(
-            full_story,
-            onFirstPage=draw_page_border,
-            onLaterPages=draw_page_border,
-        )
+        if copies == 3:
+            doc.build(full_story)
+        else:
+            doc.build(full_story, onFirstPage=draw_page_border, onLaterPages=draw_page_border)
         return names
 
     def generate(self, csv_path: str, year: int, month: int, half: int,
-                 output_filename: str = "NIA_DTR_combined.pdf"):
+                 output_filename: str = "NIA_DTR_combined.pdf",
+                 time_format: str = "24", copies: int = 3):
         """
         Generate an NIA-format DTR PDF from a CSV file for a specific half-month period.
         
@@ -555,13 +629,15 @@ class NIADTRProcessor(DTRProcessor):
         if not filename.lower().endswith(".pdf"):
             filename += ".pdf"
 
-        output_dir = "output"
+        output_dir = os.path.join(SCRIPT_DIR, "output")
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, filename)
 
         grouped = self.load_and_group(csv_path)
         period_dates = self.get_period_dates(year, month, half)
-        names = self.build_combined_pdf(grouped, period_dates, output_path)
+        names = self.build_combined_pdf(
+            grouped, period_dates, output_path, time_format, copies
+        )
 
         print(f"Generated: {output_path}")
         print(f"Done. {len(names)} personnel included for period {self.period_label(period_dates)}.")

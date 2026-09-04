@@ -1,612 +1,356 @@
-"""
-DTR Generator - Simple Desktop App
+"""PyQt6 desktop application for generating NIA-format DTR PDFs."""
 
-A point-and-click window for generating Daily Time Record PDFs from an
-attendance CSV file. No command line or typing required.
-
-Requires generate_simple_dtr.py, generate_nia_dtr.py, and generate_raw_dtr.py
-to be in the same folder (this app reuses their CSV-reading and PDF-building logic).
-
-The window has three tabs:
-    - "Simple DTR": the original generator (generate_simple_dtr.py logic).
-    - "NIA DTR": official NIA Regional Office VI form, for a chosen
-      half-month period (generate_nia_dtr.py logic).
-    - "Raw DTR": raw format that simply lists timestamps and names
-      without classification (generate_raw_dtr.py logic).
-
-To run:
-    python dtr_gui.py
-
-If double-clicking the file doesn't work on your computer, right-click
-the file and choose "Open with" > Python.
-"""
-
+import calendar
 import os
 import sys
-import calendar
-import threading
 import traceback
 from datetime import date
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
 
-# Import the OOP-based processors
-from generate_simple_dtr import SimpleDTRProcessor
+from PyQt6.QtCore import QObject, QThread, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QCloseEvent, QDesktopServices, QIcon
+from PyQt6.QtWidgets import (
+    QApplication, QFileDialog, QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
+    QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QSpinBox,
+    QSizePolicy, QSplitter, QStatusBar, QVBoxLayout, QWidget, QComboBox,
+)
+
 from generate_nia_dtr import NIADTRProcessor
-from generate_raw_dtr import RawDTRProcessor
 
+try:
+    from PyQt6.QtPdf import QPdfDocument
+    from PyQt6.QtPdfWidgets import QPdfView
+except ImportError:
+    QPdfDocument = None
+    QPdfView = None
 
-class SimpleDTRTab(tk.Frame):
-    """Tab for the original Simple DTR generator (generate_simple_dtr.py logic)."""
 
-    def __init__(self, parent):
-        super().__init__(parent)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 
-        self.csv_path = tk.StringVar()
-        self.output_name = tk.StringVar(value="simple_dtr_format.pdf")
-        self.status_text = tk.StringVar(value="Choose your attendance CSV file to begin.")
 
-        self._build_layout()
+class GenerationWorker(QObject):
+    """Run PDF generation away from the Qt event loop."""
 
-    # ------------------------------------------------------------------ UI
-    def _build_layout(self):
-        pad = {"padx": 16, "pady": 8}
+    finished = pyqtSignal(str, int, str, bool)
+    failed = pyqtSignal(str, str)
 
-        header = tk.Label(
-            self, text="Simple DTR Format",
-            font=("Segoe UI", 15, "bold")
-        )
-        header.pack(pady=(18, 2))
+    def __init__(self, csv_path, year, month, half, output_name, time_format, copies):
+        super().__init__()
+        self.csv_path = csv_path
+        self.year = year
+        self.month = month
+        self.half = half
+        self.output_name = output_name
+        self.time_format = time_format
+        self.copies = copies
 
-        subheader = tk.Label(
-            self, text="Panay River Basin Integrated Development Project",
-            font=("Segoe UI", 10), fg="#555555"
-        )
-        subheader.pack(pady=(0, 16))
-
-        # --- Step 1: choose CSV file ---
-        step1 = tk.LabelFrame(self, text=" Step 1: Select attendance CSV file ",
-                               font=("Segoe UI", 9, "bold"))
-        step1.pack(fill="x", **pad)
-
-        row1 = tk.Frame(step1)
-        row1.pack(fill="x", padx=10, pady=10)
-
-        self.file_entry = tk.Entry(row1, textvariable=self.csv_path, state="readonly", width=48)
-        self.file_entry.pack(side="left", fill="x", expand=True)
-
-        browse_btn = tk.Button(row1, text="Browse...", command=self.browse_csv, width=12)
-        browse_btn.pack(side="left", padx=(8, 0))
-
-        # --- Step 2: output file name ---
-        step2 = tk.LabelFrame(self, text=" Step 2: Name your output PDF ",
-                               font=("Segoe UI", 9, "bold"))
-        step2.pack(fill="x", **pad)
-
-        row2 = tk.Frame(step2)
-        row2.pack(fill="x", padx=10, pady=10)
-
-        name_entry = tk.Entry(row2, textvariable=self.output_name, width=48)
-        name_entry.pack(side="left", fill="x", expand=True)
-
-        tk.Label(step2, text="Will be saved inside the 'output' folder next to this app.",
-                 font=("Segoe UI", 8), fg="#777777").pack(anchor="w", padx=10, pady=(0, 8))
-
-        # --- Step 3: generate ---
-        self.generate_btn = tk.Button(
-            self, text="Generate DTR PDF", command=self.on_generate,
-            font=("Segoe UI", 11, "bold"), bg="#2c3e50", fg="white",
-            activebackground="#34495e", activeforeground="white",
-            height=2,
-        )
-        self.generate_btn.pack(fill="x", padx=16, pady=(6, 6))
-
-        self.progress = ttk.Progressbar(self, mode="indeterminate")
-        self.progress.pack(fill="x", padx=16, pady=(0, 6))
-
-        status_label = tk.Label(self, textvariable=self.status_text,
-                                 font=("Segoe UI", 9), fg="#333333",
-                                 wraplength=520, justify="left")
-        status_label.pack(fill="x", padx=16, pady=(4, 0))
-
-        open_folder_btn = tk.Button(self, text="Open output folder",
-                                     command=self.open_output_folder, width=20)
-        open_folder_btn.pack(pady=(10, 0))
-
-        footer_label = tk.Label(
-            self, text="Created by Jolou - August 20, 2026 (v.1.0)",
-            font=("Segoe UI", 9)
-        )
-
-        footer_label.pack(side="bottom", pady=5)
-
-    # ------------------------------------------------------------- actions
-    def browse_csv(self):
-        path = filedialog.askopenfilename(
-            title="Select attendance CSV file",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-        )
-        if path:
-            self.csv_path.set(path)
-            self.status_text.set(f"Selected: {os.path.basename(path)}")
-
-    def open_output_folder(self):
-        open_output_folder()
-
-    def on_generate(self):
-        csv_path = self.csv_path.get().strip()
-        if not csv_path:
-            messagebox.showwarning("Missing file", "Please select an attendance CSV file first.")
-            return
-        if not os.path.isfile(csv_path):
-            messagebox.showerror("File not found", "The selected CSV file could not be found.")
-            return
-
-        filename = self.output_name.get().strip() or "simple_dtr_format.pdf"
-        filename = os.path.basename(filename)
-        if not filename.lower().endswith(".pdf"):
-            filename += ".pdf"
-
-        # Disable the button and show a busy indicator while working
-        self.generate_btn.config(state="disabled")
-        self.status_text.set("Generating... please wait.")
-        self.progress.start(12)
-
-        # Run in a background thread so the window doesn't freeze
-        thread = threading.Thread(target=self._run_generation, args=(csv_path, filename), daemon=True)
-        thread.start()
-
-    def _run_generation(self, csv_path, filename):
-        try:
-            processor = SimpleDTRProcessor()
-            output_path = processor.generate(csv_path, filename)
-            
-            # Get the number of personnel from the generated PDF
-            # We'll count by loading and grouping
-            grouped = processor.load_and_group(csv_path)
-            full_path = os.path.abspath(output_path)
-
-            self.after(0, self._on_success, full_path, len(grouped))
-        except Exception as e:
-            error_detail = traceback.format_exc()
-            self.after(0, self._on_error, str(e), error_detail)
-
-    def _on_success(self, full_path, count):
-        self.progress.stop()
-        self.generate_btn.config(state="normal")
-        self.status_text.set(f"Done! {count} personnel included.\nSaved to: {full_path}")
-        messagebox.showinfo("Success", f"DTR PDF generated successfully!\n\n"
-                                        f"{count} personnel included.\n\nSaved to:\n{full_path}")
-
-    def _on_error(self, message, detail):
-        self.progress.stop()
-        self.generate_btn.config(state="normal")
-        self.status_text.set(f"Something went wrong: {message}")
-        messagebox.showerror(
-            "Error",
-            f"Could not generate the DTR PDF.\n\n{message}\n\n"
-            f"Please check that your CSV file has the correct columns "
-            f"(Index, Timestamp, ID, Name, Details) and try again."
-        )
-        print(detail)  # full traceback goes to console for troubleshooting
-
-
-class NIADTRTab(tk.Frame):
-    """
-    Tab for the NIA (Regional Office VI) format DTR generator
-    (generate_nia_dtr.py logic).
-
-    Lets the user pick an attendance CSV, a year/month, and which half of
-    the month (1-15 or 16-end), then builds one combined PDF with one
-    NIA-format page per person for that period.
-    """
-
-    MONTH_NAMES = [calendar.month_name[m] for m in range(1, 13)]
-    HALF_CHOICES = ["1st half (days 1-15)", "2nd half (16-end of month)"]
-
-    def __init__(self, parent):
-        super().__init__(parent)
-
-        today = date.today()
-
-        self.csv_path = tk.StringVar()
-        self.year_var = tk.StringVar(value=str(today.year))
-        self.month_var = tk.StringVar(value=self.MONTH_NAMES[today.month - 1])
-        self.half_var = tk.StringVar(
-            value=self.HALF_CHOICES[0] if today.day <= 15 else self.HALF_CHOICES[1]
-        )
-        self.output_name = tk.StringVar(value="nia_dtr_format.pdf")
-        self.status_text = tk.StringVar(value="Choose your attendance CSV file to begin.")
-
-        self._build_layout()
-
-    # ------------------------------------------------------------------ UI
-    def _build_layout(self):
-        pad = {"padx": 16, "pady": 8}
-
-        header = tk.Label(
-            self, text="NIA DTR Format",
-            font=("Segoe UI", 15, "bold")
-        )
-        header.pack(pady=(18, 2))
-
-        subheader = tk.Label(
-            self, text="Panay River Basin Integrated Development Project",
-            font=("Segoe UI", 10), fg="#555555"
-        )
-        subheader.pack(pady=(0, 16))
-
-        # --- Step 1: choose CSV file ---
-        step1 = tk.LabelFrame(self, text=" Step 1: Select attendance CSV file ",
-                               font=("Segoe UI", 9, "bold"))
-        step1.pack(fill="x", **pad)
-
-        row1 = tk.Frame(step1)
-        row1.pack(fill="x", padx=10, pady=10)
-
-        self.file_entry = tk.Entry(row1, textvariable=self.csv_path, state="readonly", width=42)
-        self.file_entry.pack(side="left", fill="x", expand=True)
-
-        browse_btn = tk.Button(row1, text="Browse...", command=self.browse_csv, width=12)
-        browse_btn.pack(side="left", padx=(8, 0))
-
-        # --- Step 2: choose period ---
-        step2 = tk.LabelFrame(self, text=" Step 2: Choose the pay period ",
-                               font=("Segoe UI", 9, "bold"))
-        step2.pack(fill="x", **pad)
-
-        row2 = tk.Frame(step2)
-        row2.pack(fill="x", padx=10, pady=10)
-
-        tk.Label(row2, text="Month:").pack(side="left")
-        month_combo = ttk.Combobox(row2, textvariable=self.month_var, values=self.MONTH_NAMES,
-                                    state="readonly", width=11)
-        month_combo.pack(side="left", padx=(4, 14))
-
-        tk.Label(row2, text="Year:").pack(side="left")
-        year_spin = tk.Spinbox(row2, textvariable=self.year_var, from_=2000, to=2100, width=6)
-        year_spin.pack(side="left", padx=(4, 14))
-
-        tk.Label(row2, text="Period:").pack(side="left")
-        half_combo = ttk.Combobox(row2, textvariable=self.half_var, values=self.HALF_CHOICES,
-                                   state="readonly", width=22)
-        half_combo.pack(side="left", padx=(4, 0))
-
-        # --- Step 3: output file name ---
-        step3 = tk.LabelFrame(self, text=" Step 3: Name your output PDF ",
-                               font=("Segoe UI", 9, "bold"))
-        step3.pack(fill="x", **pad)
-
-        row3 = tk.Frame(step3)
-        row3.pack(fill="x", padx=10, pady=10)
-
-        name_entry = tk.Entry(row3, textvariable=self.output_name, width=48)
-        name_entry.pack(side="left", fill="x", expand=True)
-
-        tk.Label(step3, text="Will be saved inside the 'output' folder next to this app.",
-                 font=("Segoe UI", 8), fg="#777777").pack(anchor="w", padx=10, pady=(0, 8))
-
-        # --- Step 4: generate ---
-        self.generate_btn = tk.Button(
-            self, text="Generate NIA DTR PDF", command=self.on_generate,
-            font=("Segoe UI", 11, "bold"), bg="#2c3e50", fg="white",
-            activebackground="#34495e", activeforeground="white",
-            height=2,
-        )
-        self.generate_btn.pack(fill="x", padx=16, pady=(6, 6))
-
-        self.progress = ttk.Progressbar(self, mode="indeterminate")
-        self.progress.pack(fill="x", padx=16, pady=(0, 6))
-
-        status_label = tk.Label(self, textvariable=self.status_text,
-                                 font=("Segoe UI", 9), fg="#333333",
-                                 wraplength=520, justify="left")
-        status_label.pack(fill="x", padx=16, pady=(4, 0))
-
-        open_folder_btn = tk.Button(self, text="Open output folder",
-                                     command=self.open_output_folder, width=20)
-        open_folder_btn.pack(pady=(10, 0))
-
-        footer_label = tk.Label(
-            self, text="Created by Jolou - August 20, 2026 (v.1.0)",
-            font=("Segoe UI", 9)
-        )
-
-        footer_label.pack(side="bottom", pady=5)
-
-    # ------------------------------------------------------------- actions
-    def browse_csv(self):
-        path = filedialog.askopenfilename(
-            title="Select attendance CSV file",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-        )
-        if path:
-            self.csv_path.set(path)
-            self.status_text.set(f"Selected: {os.path.basename(path)}")
-
-    def open_output_folder(self):
-        open_output_folder()
-
-    def on_generate(self):
-        csv_path = self.csv_path.get().strip()
-        if not csv_path:
-            messagebox.showwarning("Missing file", "Please select an attendance CSV file first.")
-            return
-        if not os.path.isfile(csv_path):
-            messagebox.showerror("File not found", "The selected CSV file could not be found.")
-            return
-
-        try:
-            year = int(self.year_var.get())
-            month = self.MONTH_NAMES.index(self.month_var.get()) + 1
-            half = 1 if self.half_var.get() == self.HALF_CHOICES[0] else 2
-        except (ValueError, IndexError):
-            messagebox.showerror("Invalid period", "Please choose a valid month, year, and period.")
-            return
-
-        filename = self.output_name.get().strip() or "nia_dtr_format.pdf"
-        filename = os.path.basename(filename)
-        if not filename.lower().endswith(".pdf"):
-            filename += ".pdf"
-
-        # Disable the button and show a busy indicator while working
-        self.generate_btn.config(state="disabled")
-        self.status_text.set("Generating... please wait.")
-        self.progress.start(12)
-
-        # Run in a background thread so the window doesn't freeze
-        thread = threading.Thread(
-            target=self._run_generation, args=(csv_path, year, month, half, filename), daemon=True
-        )
-        thread.start()
-
-    def _run_generation(self, csv_path, year, month, half, filename):
+    def run(self):
         try:
             processor = NIADTRProcessor()
-            output_path = processor.generate(csv_path, year, month, half, filename)
-            
-            # Get period info and personnel count
-            grouped = processor.load_and_group(csv_path)
-            period_dates = processor.get_period_dates(year, month, half)
-            period_lbl = processor.period_label(period_dates)
-            full_path = os.path.abspath(output_path)
-
-            self.after(0, self._on_success, full_path, len(grouped), period_lbl)
-        except Exception as e:
-            error_detail = traceback.format_exc()
-            self.after(0, self._on_error, str(e), error_detail)
-
-    def _on_success(self, full_path, count, period_lbl):
-        self.progress.stop()
-        self.generate_btn.config(state="normal")
-        self.status_text.set(
-            f"Done! {count} personnel included for {period_lbl}.\nSaved to: {full_path}"
-        )
-        messagebox.showinfo(
-            "Success",
-            f"NIA DTR PDF generated successfully!\n\n"
-            f"Period: {period_lbl}\n{count} personnel included.\n\nSaved to:\n{full_path}",
-        )
-
-    def _on_error(self, message, detail):
-        self.progress.stop()
-        self.generate_btn.config(state="normal")
-        self.status_text.set(f"Something went wrong: {message}")
-        messagebox.showerror(
-            "Error",
-            f"Could not generate the NIA DTR PDF.\n\n{message}\n\n"
-            f"Please check that your CSV file has the correct columns "
-            f"(Index, Timestamp, ID, Name, Details) and try again."
-        )
-        print(detail)  # full traceback goes to console for troubleshooting
+            output_name = self.output_name
+            if self.copies == 1:
+                output_name = f"{os.path.splitext(output_name)[0]}_preview.pdf"
+            output_path = processor.generate(
+                self.csv_path, self.year, self.month, self.half, output_name,
+                self.time_format, copies=self.copies
+            )
+            grouped = processor.load_and_group(self.csv_path)
+            period = processor.period_label(
+                processor.get_period_dates(self.year, self.month, self.half)
+            )
+            self.finished.emit(
+                os.path.abspath(output_path), len(grouped), period, self.copies == 1
+            )
+        except Exception as error:
+            self.failed.emit(str(error), traceback.format_exc())
 
 
-class RawDTRTab(tk.Frame):
-    """
-    Tab for the Raw DTR format generator (generate_raw_dtr.py logic).
-    
-    Lets the user pick an attendance CSV and generates a PDF with
-    raw timestamp entries grouped by person, without AM/PM classification.
-    """
+class PreviewPanel(QFrame):
+    """PDF preview that uses Qt PDF support when available."""
 
-    def __init__(self, parent):
+    def __init__(self, parent=None):
         super().__init__(parent)
+        self.document = None
+        self.view = None
+        self.setObjectName("previewPanel")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 20)
 
-        self.csv_path = tk.StringVar()
-        self.output_name = tk.StringVar(value="raw_dtr_format.pdf")
-        self.status_text = tk.StringVar(value="Choose your attendance CSV file to begin.")
+        heading = QLabel("Preview")
+        heading.setObjectName("panelTitle")
+        layout.addWidget(heading)
 
-        self._build_layout()
-
-    # ------------------------------------------------------------------ UI
-    def _build_layout(self):
-        pad = {"padx": 16, "pady": 8}
-
-        header = tk.Label(
-            self, text="Raw DTR Format",
-            font=("Segoe UI", 15, "bold")
-        )
-        header.pack(pady=(18, 2))
-
-        subheader = tk.Label(
-            self, text="Panay River Basin Integrated Development Project",
-            font=("Segoe UI", 10), fg="#555555"
-        )
-        subheader.pack(pady=(0, 16))
-
-        # --- Step 1: choose CSV file ---
-        step1 = tk.LabelFrame(self, text=" Step 1: Select attendance CSV file ",
-                               font=("Segoe UI", 9, "bold"))
-        step1.pack(fill="x", **pad)
-
-        row1 = tk.Frame(step1)
-        row1.pack(fill="x", padx=10, pady=10)
-
-        self.file_entry = tk.Entry(row1, textvariable=self.csv_path, state="readonly", width=48)
-        self.file_entry.pack(side="left", fill="x", expand=True)
-
-        browse_btn = tk.Button(row1, text="Browse...", command=self.browse_csv, width=12)
-        browse_btn.pack(side="left", padx=(8, 0))
-
-        # --- Step 2: output file name ---
-        step2 = tk.LabelFrame(self, text=" Step 2: Name your output PDF ",
-                               font=("Segoe UI", 9, "bold"))
-        step2.pack(fill="x", **pad)
-
-        row2 = tk.Frame(step2)
-        row2.pack(fill="x", padx=10, pady=10)
-
-        name_entry = tk.Entry(row2, textvariable=self.output_name, width=48)
-        name_entry.pack(side="left", fill="x", expand=True)
-
-        tk.Label(step2, text="Will be saved inside the 'output' folder next to this app.",
-                 font=("Segoe UI", 8), fg="#777777").pack(anchor="w", padx=10, pady=(0, 8))
-
-        # --- Step 3: generate ---
-        self.generate_btn = tk.Button(
-            self, text="Generate Raw DTR PDF", command=self.on_generate,
-            font=("Segoe UI", 11, "bold"), bg="#2c3e50", fg="white",
-            activebackground="#34495e", activeforeground="white",
-            height=2,
-        )
-        self.generate_btn.pack(fill="x", padx=16, pady=(6, 6))
-
-        self.progress = ttk.Progressbar(self, mode="indeterminate")
-        self.progress.pack(fill="x", padx=16, pady=(0, 6))
-
-        status_label = tk.Label(self, textvariable=self.status_text,
-                                 font=("Segoe UI", 9), fg="#333333",
-                                 wraplength=520, justify="left")
-        status_label.pack(fill="x", padx=16, pady=(4, 0))
-
-        open_folder_btn = tk.Button(self, text="Open output folder",
-                                     command=self.open_output_folder, width=20)
-        open_folder_btn.pack(pady=(10, 0))
-
-        footer_label = tk.Label(
-            self, text="Created by Jolou - August 20, 2026 (v.1.0)",
-            font=("Segoe UI", 9)
-        )
-
-        footer_label.pack(side="bottom", pady=5)
-
-    # ------------------------------------------------------------- actions
-    def browse_csv(self):
-        path = filedialog.askopenfilename(
-            title="Select attendance CSV file",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-        )
-        if path:
-            self.csv_path.set(path)
-            self.status_text.set(f"Selected: {os.path.basename(path)}")
-
-    def open_output_folder(self):
-        open_output_folder()
-
-    def on_generate(self):
-        csv_path = self.csv_path.get().strip()
-        if not csv_path:
-            messagebox.showwarning("Missing file", "Please select an attendance CSV file first.")
-            return
-        if not os.path.isfile(csv_path):
-            messagebox.showerror("File not found", "The selected CSV file could not be found.")
+        if QPdfDocument is None:
+            empty = QLabel("Install PyQt6 PDF support to preview generated forms.")
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(empty, 1)
             return
 
-        filename = self.output_name.get().strip() or "raw_dtr_format.pdf"
-        filename = os.path.basename(filename)
-        if not filename.lower().endswith(".pdf"):
-            filename += ".pdf"
+        self.document = QPdfDocument(self)
+        self.view = QPdfView(self)
+        self.view.setDocument(self.document)
+        self.view.setPageMode(QPdfView.PageMode.MultiPage)
+        layout.addWidget(self.view, 1)
+        self.show_message("Choose a CSV file and generate a form to preview it here.")
 
-        # Disable the button and show a busy indicator while working
-        self.generate_btn.config(state="disabled")
-        self.status_text.set("Generating... please wait.")
-        self.progress.start(12)
+    def show_message(self, text):
+        if self.view is None:
+            return
+        self.view.setEnabled(False)
+        self.view.setToolTip(text)
 
-        # Run in a background thread so the window doesn't freeze
-        thread = threading.Thread(target=self._run_generation, args=(csv_path, filename), daemon=True)
-        thread.start()
-
-    def _run_generation(self, csv_path, filename):
-        try:
-            processor = RawDTRProcessor()
-            output_path = processor.generate(csv_path, filename)
-            
-            # Get the number of personnel from the generated PDF
-            grouped = processor.load_and_group(csv_path)
-            full_path = os.path.abspath(output_path)
-
-            self.after(0, self._on_success, full_path, len(grouped))
-        except Exception as e:
-            error_detail = traceback.format_exc()
-            self.after(0, self._on_error, str(e), error_detail)
-
-    def _on_success(self, full_path, count):
-        self.progress.stop()
-        self.generate_btn.config(state="normal")
-        self.status_text.set(f"Done! {count} personnel included.\nSaved to: {full_path}")
-        messagebox.showinfo("Success", f"Raw DTR PDF generated successfully!\n\n"
-                                        f"{count} personnel included.\n\nSaved to:\n{full_path}")
-
-    def _on_error(self, message, detail):
-        self.progress.stop()
-        self.generate_btn.config(state="normal")
-        self.status_text.set(f"Something went wrong: {message}")
-        messagebox.showerror(
-            "Error",
-            f"Could not generate the Raw DTR PDF.\n\n{message}\n\n"
-            f"Please check that your CSV file has the correct columns "
-            f"(Timestamp, Name) and try again."
-        )
-        print(detail)  # full traceback goes to console for troubleshooting
+    def load(self, path):
+        if self.document is None:
+            return
+        self.document.load(path)
+        self.view.setEnabled(True)
+        self.view.setToolTip(path)
 
 
-def open_output_folder():
-    """Open (or create) the shared 'output' folder next to this app."""
-    output_dir = os.path.join(os.getcwd(), "output")
-    os.makedirs(output_dir, exist_ok=True)
-    try:
-        if sys.platform.startswith("win"):
-            os.startfile(output_dir)
-        elif sys.platform == "darwin":
-            os.system(f'open "{output_dir}"')
-        else:
-            os.system(f'xdg-open "{output_dir}"')
-    except Exception:
-        messagebox.showinfo("Output folder", f"Output folder is located at:\n{output_dir}")
+class DTRApp(QMainWindow):
+    MONTH_NAMES = [calendar.month_name[index] for index in range(1, 13)]
+    HALF_CHOICES = ["1st half (days 1-15)", "2nd half (16-end of month)"]
+    TIME_CHOICES = ["24-hour clock", "12-hour clock"]
 
-def resource_path(relative_path):
-    """Get the correct path for development and PyInstaller."""
-    try:
-        base_path = sys._MEIPASS
-    except AttributeError:
-        base_path = os.path.abspath(".")
-
-    return os.path.join(base_path, relative_path)
-
-
-class DTRApp(tk.Tk):
     def __init__(self):
         super().__init__()
+        self.worker_thread = None
+        self.worker = None
+        self.setWindowTitle("NIA DTR Formatter")
+        self.setMinimumSize(1050, 800)
+        self.resize(1200, 780)
+        self._set_icon()
+        self._build_ui()
+        self._apply_styles()
 
-        icon_path = resource_path("img/nia_icon.ico")
-        self.iconbitmap(icon_path)
+    def _set_icon(self):
+        icon_path = os.path.join(BASE_DIR, "img", "nia_icon.ico")
+        if os.path.isfile(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
 
-        self.title("NIA DTR Generator - Panay River Basin Integrated Development Project")
-        self.geometry("600x600")
-        self.resizable(False, False)
+    def _build_ui(self):
+        root = QWidget()
+        root.setObjectName("root")
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(28, 24, 28, 18)
+        root_layout.setSpacing(16)
 
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True)
+        header = QHBoxLayout()
+        title = QLabel("NIA Daily Time Record")
+        title.setObjectName("title")
+        subtitle = QLabel("Regional Office No. VI | Panay River Basin Integrated Development Project")
+        subtitle.setObjectName("subtitle")
+        header_text = QVBoxLayout()
+        header_text.addWidget(title)
+        header_text.addWidget(subtitle)
+        header.addLayout(header_text)
+        header.addStretch()
+        root_layout.addLayout(header)
 
-        simple_tab = SimpleDTRTab(notebook)
-        nia_tab = NIADTRTab(notebook)
-        raw_tab = RawDTRTab(notebook)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        splitter.addWidget(self._build_options())
+        splitter.addWidget(PreviewPanel())
+        splitter.setSizes([390, 760])
+        root_layout.addWidget(splitter, 1)
+        self.preview = splitter.widget(1)
 
-        notebook.add(raw_tab, text="Raw DTR")
-        notebook.add(simple_tab, text="Simple DTR")
-        notebook.add(nia_tab, text="NIA DTR")
+        self.setCentralWidget(root)
+        self.setStatusBar(QStatusBar())
+        self.statusBar().showMessage("Ready to generate an NIA DTR form")
+
+    def _build_options(self):
+        panel = QFrame()
+        panel.setObjectName("optionsPanel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setSpacing(16)
+
+        heading = QLabel("Form settings")
+        heading.setObjectName("panelTitle")
+        layout.addWidget(heading)
+
+        source_group = QGroupBox("Attendance source")
+        source_layout = QVBoxLayout(source_group)
+        source_row = QHBoxLayout()
+        self.csv_edit = QLineEdit()
+        self.csv_edit.setPlaceholderText("Select an attendance CSV")
+        self.csv_edit.setReadOnly(True)
+        browse = QPushButton("Browse")
+        browse.setObjectName("secondaryButton")
+        browse.clicked.connect(self.browse_csv)
+        source_row.addWidget(self.csv_edit, 1)
+        source_row.addWidget(browse)
+        source_layout.addLayout(source_row)
+        self.file_hint = QLabel("CSV columns: Index, Timestamp, ID, Name, Details")
+        self.file_hint.setObjectName("hint")
+        source_layout.addWidget(self.file_hint)
+        layout.addWidget(source_group)
+
+        period_group = QGroupBox("Pay period")
+        period_form = QGridLayout(period_group)
+        period_form.setContentsMargins(0, 0, 0, 0)
+        period_form.setVerticalSpacing(12)
+        period_form.setHorizontalSpacing(0)
+        period_form.setColumnStretch(0, 1)
+        period_form.setColumnStretch(1, 1)
+        period_form.setColumnStretch(2, 1)
+        period_form.setColumnStretch(3, 1)
+        today = date.today()
+        self.month_combo = QComboBox()
+        self.month_combo.addItems(self.MONTH_NAMES)
+        self.month_combo.setCurrentIndex(today.month - 1)
+        self.month_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.year_spin = QSpinBox()
+        self.year_spin.setRange(2000, 2100)
+        self.year_spin.setValue(today.year)
+        self.year_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.half_combo = QComboBox()
+        self.half_combo.addItems(self.HALF_CHOICES)
+        self.half_combo.setCurrentIndex(0 if today.day <= 15 else 1)
+        self.half_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.time_combo = QComboBox()
+        self.time_combo.addItems(self.TIME_CHOICES)
+        self.time_combo.setCurrentIndex(0)
+        self.time_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        period_form.addWidget(self.month_combo, 0, 0, 1, 2)
+        period_form.addWidget(self.year_spin, 0, 2, 1, 2)
+        period_form.addWidget(self.half_combo, 1, 0, 1, 4)
+        period_form.addWidget(self.time_combo, 2, 0, 1, 4)
+        layout.addWidget(period_group)
+
+        output_group = QGroupBox("Output")
+        output_form = QGridLayout(output_group)
+        output_form.setContentsMargins(0, 0, 0, 0)
+        output_form.setColumnStretch(1, 1)
+        self.output_edit = QLineEdit("nia_dtr_format.pdf")
+        self.output_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        output_form.addWidget(self.output_edit, 0, 0, 1, 2)
+        output_hint = QLabel("Saved in the output folder beside this application.")
+        output_hint.setObjectName("hint")
+        output_form.addWidget(output_hint, 1, 0, 1, 2)
+        layout.addWidget(output_group)
+
+        action_row = QHBoxLayout()
+        self.preview_button = QPushButton("Preview PDF")
+        self.preview_button.setObjectName("secondaryButton")
+        self.preview_button.clicked.connect(lambda: self.generate(1))
+        action_row.addWidget(self.preview_button)
+        self.print_button = QPushButton("Print PDF")
+        self.print_button.setObjectName("primaryButton")
+        self.print_button.clicked.connect(lambda: self.generate(3))
+        action_row.addWidget(self.print_button)
+        layout.addLayout(action_row)
+        self.open_button = QPushButton("Open output folder")
+        self.open_button.setObjectName("secondaryButton")
+        self.open_button.clicked.connect(self.open_output_folder)
+        layout.addWidget(self.open_button)
+        layout.addStretch()
+        return panel
+
+    def _apply_styles(self):
+        self.setStyleSheet(
+            """
+            QWidget#root { background: #f4f1eb; }
+            QMainWindow { background: #f4f1eb; }
+            QLabel#title { color: #173f3a; font-size: 28px; font-weight: 700; }
+            QLabel#subtitle, QLabel#hint { color: #6d7773; }
+            QLabel#panelTitle { color: #173f3a; font-size: 18px; font-weight: 700; }
+            QFrame#optionsPanel, QFrame#previewPanel { background: #fffdf9; border: 1px solid #ddd8cf; border-radius: 8px; }
+            QGroupBox { color: #344742; font-weight: 700; border: 1px solid #e2ddd4; border-radius: 6px; margin-top: 10px; padding: 16px 12px 12px; }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }
+            QLineEdit, QComboBox, QSpinBox { background: #ffffff; border: 1px solid #c9cec8; border-radius: 4px; padding: 8px; color: #26312e; }
+            QPushButton { border-radius: 4px; padding: 10px 14px; font-weight: 700; }
+            QPushButton#primaryButton { background: #c45d35; color: white; min-height: 44px; }
+            QPushButton#primaryButton:hover { background: #a94c2c; }
+            QPushButton#secondaryButton { background: #e6eee9; color: #174b44; }
+            QPushButton#secondaryButton:hover { background: #d2e2da; }
+            QSplitter::handle { background: #d6d0c5; width: 8px; }
+            QStatusBar { color: #52615b; }
+            """
+        )
+
+    def browse_csv(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select attendance CSV file", "", "CSV files (*.csv);;All files (*.*)"
+        )
+        if path:
+            self.csv_edit.setText(path)
+            self.file_hint.setText(f"Selected: {os.path.basename(path)}")
+            self.statusBar().showMessage("CSV file selected")
+
+    def _validated_values(self):
+        csv_path = self.csv_edit.text().strip()
+        if not csv_path:
+            raise ValueError("Select an attendance CSV file first.")
+        if not os.path.isfile(csv_path):
+            raise ValueError("The selected CSV file could not be found.")
+        filename = os.path.basename(self.output_edit.text().strip() or "nia_dtr_format.pdf")
+        if not filename.lower().endswith(".pdf"):
+            filename += ".pdf"
+        return (csv_path, self.year_spin.value(), self.month_combo.currentIndex() + 1,
+            self.half_combo.currentIndex() + 1, filename,
+            "24" if self.time_combo.currentIndex() == 0 else "12")
+
+    def generate(self, copies):
+        try:
+            values = self._validated_values()
+        except ValueError as error:
+            QMessageBox.warning(self, "Check form settings", str(error))
+            return
+
+        self.preview_button.setEnabled(False)
+        self.print_button.setEnabled(False)
+        action = "preview" if copies == 1 else "print"
+        self.statusBar().showMessage(f"Generating {action} PDF...")
+        self.worker_thread = QThread(self)
+        self.worker = GenerationWorker(*values, copies)
+        self.worker.moveToThread(self.worker_thread)
+        self.worker_thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self.on_success)
+        self.worker.failed.connect(self.on_failure)
+        self.worker.finished.connect(self.worker_thread.quit)
+        self.worker.failed.connect(self.worker_thread.quit)
+        self.worker_thread.finished.connect(self.worker.deleteLater)
+        self.worker_thread.finished.connect(self.worker_thread.deleteLater)
+        self.worker_thread.start()
+
+    def on_success(self, path, count, period, is_preview):
+        self.preview_button.setEnabled(True)
+        self.print_button.setEnabled(True)
+        action = "Preview" if is_preview else "Printable"
+        self.statusBar().showMessage(f"Generated {action.lower()} PDF for {count} personnel records")
+        if is_preview:
+            self.preview.load(path)
+        QMessageBox.information(
+            self, "DTR generated",
+            f"{action} DTR created successfully for {period}.\n\nSaved to:\n{path}"
+        )
+
+    def on_failure(self, message, detail):
+        self.preview_button.setEnabled(True)
+        self.print_button.setEnabled(True)
+        self.statusBar().showMessage("Generation failed")
+        print(detail)
+        QMessageBox.critical(self, "Generation failed", f"Could not generate the NIA DTR.\n\n{message}")
+
+    def open_output_folder(self):
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(OUTPUT_DIR))
+
+    def closeEvent(self, event: QCloseEvent):
+        if self.worker_thread and self.worker_thread.isRunning():
+            self.worker_thread.quit()
+            self.worker_thread.wait()
+        event.accept()
+
+
+def main():
+    app = QApplication(sys.argv)
+    window = DTRApp()
+    window.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
-    app = DTRApp()
-    app.mainloop()
+    main()

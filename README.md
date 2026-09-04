@@ -11,7 +11,7 @@ The tool can generate:
 - Simple DTR PDFs: one page per employee with a date-by-date AM/PM entry table.
 - NIA DTR PDFs: one NIA-formatted page per employee for a selected half-month period.
 - Raw DTR PDFs: one page per employee showing raw timestamp and name entries without AM/PM classification.
-- GUI desktop app: a Tkinter interface for selecting CSV files and generating output without using the CLI.
+- GUI desktop app: a PyQt6 interface with NIA form options and an integrated PDF preview.
 
 ## Architecture
 
@@ -30,7 +30,7 @@ This design eliminates code duplication and makes the codebase more maintainable
 - `generate_simple_dtr.py` – `SimpleDTRProcessor` for simple DTR PDF generation.
 - `generate_nia_dtr.py` – `NIADTRProcessor` for NIA-formatted DTR generation.
 - `generate_raw_dtr.py` – `RawDTRProcessor` for raw DTR PDF generation (timestamps and names only).
-- `dtr_gui.py` – desktop GUI that wraps both generators.
+- `dtr_gui.py` – PyQt6 desktop GUI for generating and previewing NIA forms.
 - `sample/sample.csv` – example input CSV.
 - `output/` – generated PDF output folder.
 - `img/` – logo assets used by the NIA form.
@@ -52,6 +52,7 @@ pip install -r requirements.txt
 
 Dependencies include:
 
+- PyQt6
 - pandas
 - reportlab
 
@@ -214,7 +215,10 @@ If no output filename is set, it defaults to `DTR_raw_combined.pdf`.
 python dtr_gui.py
 ```
 
-Running `dtr_gui.py` opens a Tkinter window with two tabs:
+Running `dtr_gui.py` opens a single NIA DTR workspace with two columns:
+
+- Left: attendance CSV, pay period, output filename, and generation controls.
+- Right: integrated PDF preview after generation.
 
 - **Simple DTR** – generates simple DTR PDFs
 - **NIA DTR** – generates NIA-formatted DTR PDFs
