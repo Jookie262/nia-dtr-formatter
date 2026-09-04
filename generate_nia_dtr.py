@@ -24,6 +24,8 @@ from datetime import date
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
 )
@@ -40,11 +42,62 @@ DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 #   img/bagong_pilipinas.png   -> shown on the RIGHT of the header
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 IMG_DIR = os.path.join(SCRIPT_DIR, "img")
+FONT_DIR = os.path.join(SCRIPT_DIR, "font")
 NIA_LOGO_PATH = os.path.join(IMG_DIR, "nia_logo.png")
 OFFICE_PRESIDENT_LOGO_PATH = os.path.join(IMG_DIR, "office_president.png")
 BAGONG_PILIPINAS_LOGO_PATH = os.path.join(IMG_DIR, "bagong_pilipinas.png")
 
-LOGO_SIZE = 1 * inch  # both logos are drawn at this width/height
+LOGO_SIZE = 0.55 * inch  # logos are drawn at this width/height
+NIA_PAGE_WIDTH = 8.5 * inch
+NIA_PAGE_HEIGHT = 6.5 * inch
+BORDER_HORIZONTAL_INSET = 0.40 * inch
+BORDER_VERTICAL_INSET = 0.18 * inch
+FOOTER_BOTTOM_PADDING = 0.05 * inch
+
+
+def register_header_fonts():
+    """Register the requested header fonts and return their ReportLab names."""
+    cambria_path = os.path.join(FONT_DIR, "Cambria.ttf")
+    cambria_bold_path = os.path.join(FONT_DIR, "Cambria-Bold.ttf")
+    if not os.path.isfile(cambria_bold_path):
+        cambria_bold_path = os.path.join(os.environ["WINDIR"], "Fonts", "cambriab.ttf")
+    pdfmetrics.registerFont(
+        TTFont("NIA-Cambria", cambria_path)
+    )
+    pdfmetrics.registerFont(
+        TTFont("NIA-Cambria-Bold", cambria_bold_path)
+    )
+
+    trajan_candidates = [
+        os.path.join(FONT_DIR, "TrajanPro-Regular.ttf"),
+        os.path.join(FONT_DIR, "TrajanPro-Regular.otf"),
+    ]
+    trajan_bold_candidates = [
+        os.path.join(FONT_DIR, "TrajanPro-Bold.ttf"),
+        os.path.join(FONT_DIR, "TrajanPro-Bold.otf"),
+    ]
+    trajan_path = next((path for path in trajan_candidates if os.path.isfile(path)), None)
+    trajan_bold_path = next(
+        (path for path in trajan_bold_candidates if os.path.isfile(path)), None
+    )
+    if trajan_path:
+        pdfmetrics.registerFont(TTFont("NIA-TrajanPro", trajan_path))
+        trajan_font = "NIA-TrajanPro"
+        if trajan_bold_path:
+            try:
+                pdfmetrics.registerFont(TTFont("NIA-TrajanPro-Bold", trajan_bold_path))
+                trajan_bold_font = "NIA-TrajanPro-Bold"
+            except Exception:
+                trajan_bold_font = "Times-Bold"
+        else:
+            trajan_bold_font = trajan_font
+    else:
+        trajan_font = "Times-Roman"
+        trajan_bold_font = "Times-Bold"
+    return "NIA-Cambria", "NIA-Cambria-Bold", trajan_font, trajan_bold_font
+
+
+CAMBRIA_FONT, CAMBRIA_BOLD_FONT, TRAJAN_FONT, TRAJAN_BOLD_FONT = register_header_fonts()
 
 
 class NIADTRProcessor(DTRProcessor):
@@ -138,21 +191,38 @@ class NIADTRProcessor(DTRProcessor):
         """Build the flowable content for one person's NIA-format DTR page."""
 
         agency_style = ParagraphStyle(
-            "NIAAgency", parent=styles["Normal"], fontSize=10, alignment=TA_CENTER,
-            leading=13,
+            "NIAAgency", parent=styles["Normal"], fontSize=10, alignment=TA_LEFT,
+            fontName=CAMBRIA_FONT, leading=13,
+        )
+        agency_cambria_bold_style = ParagraphStyle(
+            "NIAAgencyCambriaBold", parent=agency_style,
+            fontName=CAMBRIA_BOLD_FONT,
         )
         agency_bold_style = ParagraphStyle(
-            "NIAAgencyBold", parent=agency_style, fontName="Helvetica-Bold", fontSize=11,
+            "NIAAgencyBold", parent=agency_style, fontName=TRAJAN_FONT, fontSize=10,
+        )
+        regional_style = ParagraphStyle(
+            "NIARegional", parent=agency_style, fontName=TRAJAN_FONT, fontSize=10,
         )
         title_style = ParagraphStyle(
-            "NIATitle", parent=styles["Normal"], fontSize=13, alignment=TA_CENTER,
-            fontName="Helvetica-Bold", spaceBefore=8, spaceAfter=10,
+            "NIATitle", parent=styles["Normal"], fontSize=11, alignment=TA_CENTER,
+            fontName="Helvetica-Bold", spaceBefore=3, spaceAfter=3,
         )
         info_style = ParagraphStyle(
             "NIAInfo", parent=styles["Normal"], fontSize=9, alignment=TA_LEFT, leading=13,
         )
+        employee_name_style = ParagraphStyle(
+            "NIAEmployeeName", parent=info_style, alignment=TA_CENTER,
+        )
+        date_generated_style = ParagraphStyle(
+            "NIADateGenerated", parent=info_style, alignment=TA_CENTER,
+        )
+        office_hours_style = ParagraphStyle(
+            "NIAOfficeHours", parent=info_style, fontSize=7.5, leading=11,
+        )
         cert_style = ParagraphStyle(
-            "NIACert", parent=styles["Normal"], fontSize=8.5, alignment=TA_LEFT, leading=12,
+            "NIACert", parent=styles["Normal"], fontSize=8.5, alignment=TA_LEFT,
+            fontName="Helvetica-Oblique", leading=12,
             spaceBefore=16,
         )
         sig_style = ParagraphStyle(
@@ -163,10 +233,10 @@ class NIADTRProcessor(DTRProcessor):
 
         # --- Agency header: NIA logo (left) | agency text (center) | Bagong Pilipinas logo (right) ---
         agency_text_cell = [
-            Paragraph("Republic of the Philippines", agency_style),
+            Paragraph("Republic of the Philippines", agency_cambria_bold_style),
             Paragraph("OFFICE OF THE PRESIDENT", agency_style),
             Paragraph("NATIONAL IRRIGATION ADMINISTRATION", agency_bold_style),
-            Paragraph("REGIONAL OFFICE NO. VI (WESTERN VISAYAS)", agency_style),
+            Paragraph("REGIONAL OFFICE NO. VI (WESTERN VISAYAS)", regional_style),
         ]
 
         nia_logo = self._load_logo(NIA_LOGO_PATH)
@@ -179,7 +249,7 @@ class NIADTRProcessor(DTRProcessor):
                 office_president_logo if office_president_logo else "",
                 nia_logo if nia_logo else "",
             ]],
-            colWidths=[0.85 * inch, 0.85 * inch]
+            colWidths=[1 * LOGO_SIZE, 1.2 * LOGO_SIZE]
         )
 
         left_logos.setStyle(TableStyle([
@@ -196,7 +266,11 @@ class NIADTRProcessor(DTRProcessor):
             agency_text_cell,
             bagong_pilipinas_logo if bagong_pilipinas_logo else "",
         ]]
-        header_table = Table(header_data, colWidths=[1.0 * inch, 5.3 * inch, 1.0 * inch])
+        header_table = Table(
+            header_data,
+            colWidths=[2.4 * LOGO_SIZE, 4 * inch, 1.0 * inch],
+        )
+        header_table.hAlign = "CENTER"
         header_table.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ALIGN", (0, 0), (0, 0), "CENTER"),
@@ -204,45 +278,53 @@ class NIADTRProcessor(DTRProcessor):
             ("ALIGN", (2, 0), (2, 0), "CENTER"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 10),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]))
         story.append(header_table)
-        story.append(Spacer(1, 6))
 
         # --- Title + period ---
         story.append(Paragraph(f"Daily Time Record &nbsp;&nbsp;&nbsp; {period_lbl}", title_style))
 
         # --- Name / Date Generated / Office Hours row ---
         info_data = [[
-            Paragraph(f"<b>{name}</b>", info_style),
-            Paragraph(f"<b>Date Generated:</b><br/>{date_generated}", info_style),
+            Paragraph(f"<b>{name.upper()}</b>", employee_name_style),
+            Paragraph(f"<b>Date Generated:</b><br/>{date_generated}", date_generated_style),
             Paragraph(
                 "<b>OFFICE HOURS</b><br/>"
                 "MONDAY: 8:00 AM to 5:00 PM<br/>"
-                "TUESDAY - FRIDAY: 8:00-8:30 AM to 5:00-5:30 PM",
-                info_style,
+                "TUESDAY - FRIDAY: <u>8:00-8:30 AM</u> to <u>5:00-5:30 PM</u>",
+                office_hours_style,
             ),
         ]]
-        info_table = Table(info_data, colWidths=[2.3 * inch, 1.8 * inch, 3.2 * inch])
+        info_fixed_col_widths = [2.8 * inch, 1.8 * inch]
+        info_table_width = NIA_PAGE_WIDTH - (2 * BORDER_HORIZONTAL_INSET)
+        info_table = Table(
+            info_data,
+            colWidths=info_fixed_col_widths + [
+                info_table_width - sum(info_fixed_col_widths),
+            ],
+        )
+        info_table.hAlign = "CENTER"
         info_table.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LINEBELOW", (0, 0), (-1, 0), 0.75, colors.HexColor("#888888")),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("VALIGN", (0, 0), (0, 0), "MIDDLE"),
+            ("VALIGN", (1, 0), (1, 0), "MIDDLE"),
+            ("LINEABOVE", (0, 0), (-1, 0), 0.5, colors.black),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
         ]))
         story.append(info_table)
-        story.append(Spacer(1, 6))
 
         header_cell_style = ParagraphStyle(
             "NIAHeaderCell", parent=styles["Normal"], fontSize=8, alignment=TA_CENTER,
-            fontName="Helvetica-Bold", textColor=colors.white, leading=9,
+            fontName="Helvetica-Bold", textColor=colors.black, leading=9,
         )
 
         # --- Main table: Date | Day | AM In/Out | PM In/Out | Tardiness/Undertime In/Out | Remarks ---
         header_row1 = [
             "Date", "Day", "AM", "", "PM", "",
-            Paragraph("TARDINESS/<br/>UNDERTIME", header_cell_style), "", "Remarks",
+            "TARDINESS/UNDERTIME", "", "Remarks",
         ]
         header_row2 = ["", "", "IN", "OUT", "IN", "OUT", "IN", "OUT", ""]
 
@@ -259,15 +341,19 @@ class NIADTRProcessor(DTRProcessor):
                 "",      # Remarks
             ])
 
-        col_widths = [
-            0.75 * inch, 0.55 * inch,   # Date, Day
+        fixed_col_widths = [
+            0.75 * inch, 0.65 * inch,   # Date, Day
             0.62 * inch, 0.62 * inch,   # AM In, Out
             0.62 * inch, 0.62 * inch,   # PM In, Out
-            0.55 * inch, 0.55 * inch,   # Tardiness/Undertime In, Out
-            2.62 * inch,                # Remarks
+            0.76 * inch, 0.76 * inch,   # Tardiness/Undertime In, Out
+        ]
+        table_width = NIA_PAGE_WIDTH - (2 * BORDER_HORIZONTAL_INSET)
+        col_widths = fixed_col_widths + [
+            table_width - sum(fixed_col_widths),  # Remarks
         ]
 
         table = Table(table_data, colWidths=col_widths, repeatRows=2)
+        table.hAlign = "CENTER"
         style_cmds = [
             ("SPAN", (0, 0), (0, 1)),   # Date
             ("SPAN", (1, 0), (1, 1)),   # Day
@@ -275,58 +361,121 @@ class NIADTRProcessor(DTRProcessor):
             ("SPAN", (4, 0), (5, 0)),   # PM
             ("SPAN", (6, 0), (7, 0)),   # TARDINESS/UNDERTIME
             ("SPAN", (8, 0), (8, 1)),   # Remarks
-            ("BACKGROUND", (0, 0), (-1, 1), colors.HexColor("#2c3e50")),
-            ("TEXTCOLOR", (0, 0), (-1, 1), colors.white),
+            ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+            ("TEXTCOLOR", (0, 0), (-1, 1), colors.black),
             ("FONTNAME", (0, 0), (-1, 1), "Helvetica-Bold"),
             ("FONTSIZE", (0, 0), (-1, 1), 8),
             ("FONTSIZE", (0, 2), (-1, -1), 8.5),
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("ALIGN", (1, 0), (1, 1), "CENTER"),
+            ("ALIGN", (1, 2), (1, -1), "LEFT"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#999999")),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+            ("TOPPADDING", (0, 0), (-1, -1), 1),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0.65),
         ]
-        # Shade weekend rows lightly, like the blank form's ruled rows
-        for i, d in enumerate(period_dates, start=2):
-            if d.weekday() >= 5:  # Sat/Sun
-                style_cmds.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#eef0f2")))
         table.setStyle(TableStyle(style_cmds))
         story.append(table)
 
+        undertime_label_style = ParagraphStyle(
+            "NIAUndertimeLabel", parent=styles["Normal"], fontSize=7,
+            alignment=TA_CENTER, leading=10,
+        )
+        undertime_label_table = Table(
+            [["", "", "", "", "", "", Paragraph(
+                "TARDINESS<br/>UNDERTIME", undertime_label_style,
+            )]],
+            colWidths=col_widths,
+        )
+        undertime_label_table.hAlign = "CENTER"
+        undertime_label_table.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        story.append(undertime_label_table)
+
         # --- Certification statement ---
-        story.append(Paragraph(
-            "I hereby certify on my honor that the above statement is true and correct report of the "
-            "work performed, record of which was made daily at the time of arrival and departure from office.",
-            cert_style,
-        ))
+        certification_table = Table(
+            [[Paragraph(
+                "I hereby certify on my honor that the above statement is true and correct report of the "
+                "work performed, record of which was made daily at the time of arrival and departure from office.",
+                cert_style,
+            )]],
+            colWidths=[NIA_PAGE_WIDTH - (2 * BORDER_HORIZONTAL_INSET)],
+        )
+        certification_table.hAlign = "CENTER"
+        certification_table.setStyle(TableStyle([
+            ("LINEABOVE", (0, 0), (-1, 0), 0.3, colors.black),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.3, colors.black),
+            ("LEFTPADDING", (0, 0), (-1, -1), 2),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        story.append(certification_table)
 
         # --- Signature block ---
-        story.append(Spacer(1, 30))
+        #story.append(Spacer(1, 10))
         
-        # Create a style for bold, larger names
-        name_style = ParagraphStyle(
-            'NameStyle',
-            parent=styles['Normal'],
-            fontSize=11,
-            fontName='Helvetica-Bold',
-            alignment=TA_CENTER,
+        signatory_name_style = ParagraphStyle(
+            "NIASignatoryName", parent=styles["Normal"], fontSize=10,
+            fontName="Helvetica-Bold", alignment=TA_CENTER, leading=5,
         )
-        
+        signatory_label_style = ParagraphStyle(
+            "NIASignatoryLabel", parent=styles["Normal"], fontSize=8,
+            alignment=TA_LEFT, leading=25,
+        )
+        signatory_role_style = ParagraphStyle(
+            "NIASignatoryRole", parent=styles["Normal"], fontSize=9,
+            alignment=TA_CENTER, leading=8,
+        )
+        signature_line_style = ParagraphStyle(
+            "NIASignatureLine", parent=styles["Normal"], fontSize=8,
+            alignment=TA_CENTER, leading=12,
+        )
+
         sig_data = [
-            [Paragraph("<b>Jelyn Largo</b>", name_style), Paragraph("<b>Jessa A. Resol</b>", name_style)],
-            ["_______________________________", "_______________________________"],
-            ["Prepared By", "Verified By (Supervisor)"],
+            [
+                "",
+                Paragraph("CERTIFIED BY:", signatory_label_style),
+                Paragraph("APPROVED:", signatory_label_style),
+            ],
+            [
+                Paragraph(name.upper(), signatory_name_style),
+                Paragraph("MARITESS M. BOLINAS", signatory_name_style),
+                Paragraph("REBECCA F. GRANA", signatory_name_style),
+            ],
+            [
+                Paragraph("_____________________________", signature_line_style),
+                Paragraph("_____________________________", signature_line_style),
+                Paragraph("_____________________________", signature_line_style),
+            ],
+            [
+                Paragraph("Signature of Employee", signatory_role_style),
+                Paragraph("Administrative Services Officer V", signatory_role_style),
+                Paragraph("Acting Division Manager - EOD", signatory_role_style),
+            ],
         ]
-        sig_table = Table(sig_data, colWidths=[3.65 * inch, 3.65 * inch])
+        sig_table = Table(
+            sig_data,
+            colWidths=[
+                (NIA_PAGE_WIDTH - (2 * BORDER_HORIZONTAL_INSET)) / 3,
+            ] * 3,
+        )
         sig_table.setStyle(TableStyle([
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("FONTSIZE", (0, 1), (-1, 1), 9),  # signature lines
-            ("FONTSIZE", (0, 2), (-1, 2), 9),  # labels
             ("TOPPADDING", (0, 0), (-1, 0), 0),
+            ("TOPPADDING", (1, 0), (2, 0), 2),
             ("TOPPADDING", (0, 1), (-1, 1), 0),
             ("TOPPADDING", (0, 2), (-1, 2), 0),
+            ("TOPPADDING", (0, 3), (-1, 3), 0),
             ("BOTTOMPADDING", (0, 0), (-1, 0), 0),
             ("BOTTOMPADDING", (0, 1), (-1, 1), 0),
+            ("BOTTOMPADDING", (0, 2), (-1, 2), 0),
+            ("BOTTOMPADDING", (0, 3), (-1, 3), 0),
         ]))
         story.append(sig_table)
 
@@ -339,14 +488,34 @@ class NIADTRProcessor(DTRProcessor):
         load_and_group. Only dates that fall inside period_dates are used;
         days with no scans still get a row.
         """
+        def draw_page_border(canvas, document):
+            canvas.saveState()
+            canvas.setStrokeColor(colors.black)
+            canvas.setLineWidth(0.75)
+            canvas.rect(
+                BORDER_HORIZONTAL_INSET,
+                BORDER_VERTICAL_INSET,
+                document.pagesize[0] - (2 * BORDER_HORIZONTAL_INSET),
+                document.pagesize[1] - (2 * BORDER_VERTICAL_INSET),
+                stroke=1,
+                fill=0,
+            )
+            canvas.setFont("Helvetica-Oblique", 7.5)
+            canvas.drawString(
+                BORDER_HORIZONTAL_INSET,
+                FOOTER_BOTTOM_PADDING,
+                "NIA-ROVI-AFD-AS-INT-Form55 Rev.01",
+            )
+            canvas.restoreState()
+
         pdf_title = os.path.splitext(os.path.basename(output_path))[0]
         doc = SimpleDocTemplate(
             output_path,
-            pagesize=letter,
-            topMargin=0.5 * inch,
-            bottomMargin=0.5 * inch,
-            leftMargin=0.6 * inch,
-            rightMargin=0.6 * inch,
+            pagesize=(NIA_PAGE_WIDTH, NIA_PAGE_HEIGHT),
+            topMargin=0,
+            bottomMargin=0,
+            leftMargin=0,
+            rightMargin=0,
             title=pdf_title,
         )
         styles = getSampleStyleSheet()
@@ -363,7 +532,11 @@ class NIADTRProcessor(DTRProcessor):
             if i < len(names) - 1:
                 full_story.append(PageBreak())
 
-        doc.build(full_story)
+        doc.build(
+            full_story,
+            onFirstPage=draw_page_border,
+            onLaterPages=draw_page_border,
+        )
         return names
 
     def generate(self, csv_path: str, year: int, month: int, half: int,
