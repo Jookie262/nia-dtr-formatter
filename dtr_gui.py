@@ -30,7 +30,8 @@ except ImportError:
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else BASE_DIR
+OUTPUT_DIR = os.path.join(APP_DIR, "output")
 
 
 class GenerationWorker(QObject):

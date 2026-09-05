@@ -42,6 +42,7 @@ DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 #   img/nia_logo.png           -> shown on the LEFT of the header
 #   img/bagong_pilipinas.png   -> shown on the RIGHT of the header
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else SCRIPT_DIR
 IMG_DIR = os.path.join(SCRIPT_DIR, "img")
 FONT_DIR = os.path.join(SCRIPT_DIR, "font")
 NIA_LOGO_PATH = os.path.join(IMG_DIR, "nia_logo.png")
@@ -630,7 +631,7 @@ class NIADTRProcessor(DTRProcessor):
         if not filename.lower().endswith(".pdf"):
             filename += ".pdf"
 
-        output_dir = os.path.join(SCRIPT_DIR, "output")
+        output_dir = os.path.join(APP_DIR, "output")
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, filename)
 
