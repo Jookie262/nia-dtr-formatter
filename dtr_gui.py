@@ -6,12 +6,12 @@ import sys
 import traceback
 from datetime import date
 
-from PyQt6.QtCore import QObject, QThread, Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, QTimer, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QCloseEvent, QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QSpinBox,
-    QSizePolicy, QSplitter, QStatusBar, QVBoxLayout, QWidget, QComboBox,
+    QSizePolicy, QSplitter, QScrollArea, QStatusBar, QVBoxLayout, QWidget, QComboBox,
 )
 
 from generate_nia_dtr import NIADTRProcessor
@@ -31,10 +31,11 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 class GenerationWorker(QObject):
     """Run PDF generation away from the Qt event loop."""
 
-    finished = pyqtSignal(str, int, str, bool)
+    finished = pyqtSignal(str, int, str)
     failed = pyqtSignal(str, str)
 
-    def __init__(self, csv_path, year, month, half, output_name, time_format, copies):
+    def __init__(self, csv_path, year, month, half, output_name, time_format,
+                 employee_mode, employee_names, copies):
         super().__init__()
         self.csv_path = csv_path
         self.year = year
@@ -43,6 +44,8 @@ class GenerationWorker(QObject):
         self.output_name = output_name
         self.time_format = time_format
         self.copies = copies
+        self.employee_mode = employee_mode
+        self.employee_names = employee_names
 
     def run(self):
         try:
@@ -52,17 +55,73 @@ class GenerationWorker(QObject):
                 output_name = f"{os.path.splitext(output_name)[0]}_preview.pdf"
             output_path = processor.generate(
                 self.csv_path, self.year, self.month, self.half, output_name,
-                self.time_format, copies=self.copies
+                self.time_format, copies=self.copies,
+                employee_mode=self.employee_mode, employee_names=self.employee_names,
             )
             grouped = processor.load_and_group(self.csv_path)
+            if self.employee_mode == "selected":
+                grouped = {
+                    name: grouped[name] for name in self.employee_names if name in grouped
+                }
+            elif self.employee_mode == "except":
+                grouped = {
+                    name: data for name, data in grouped.items()
+                    if name not in self.employee_names
+                }
             period = processor.period_label(
                 processor.get_period_dates(self.year, self.month, self.half)
             )
-            self.finished.emit(
-                os.path.abspath(output_path), len(grouped), period, self.copies == 1
-            )
+            self.finished.emit(os.path.abspath(output_path), len(grouped), period)
         except Exception as error:
             self.failed.emit(str(error), traceback.format_exc())
+
+
+class MultiSelectComboBox(QComboBox):
+    """A compact checkable dropdown for selecting multiple employees."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setEditable(True)
+        self.lineEdit().setReadOnly(True)
+        self.lineEdit().setPlaceholderText("Select one or more employees")
+        self.view().pressed.connect(self._toggle_item)
+
+    def set_items(self, items):
+        self.clear()
+        self.addItems(items)
+        for row in range(self.model().rowCount()):
+            item = self.model().item(row)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setData(Qt.CheckState.Unchecked, Qt.ItemDataRole.CheckStateRole)
+        self._update_summary()
+
+    def selected_items(self):
+        return [
+            self.model().item(row).text()
+            for row in range(self.model().rowCount())
+            if self.model().item(row).checkState() == Qt.CheckState.Checked
+        ]
+
+    def _toggle_item(self, index):
+        item = self.model().item(index.row())
+        new_state = (
+            Qt.CheckState.Unchecked
+            if item.checkState() == Qt.CheckState.Checked
+            else Qt.CheckState.Checked
+        )
+        item.setData(new_state, Qt.ItemDataRole.CheckStateRole)
+        self._update_summary()
+        QTimer.singleShot(0, self.showPopup)
+
+    def _update_summary(self):
+        selected = self.selected_items()
+        if not selected:
+            summary = ""
+        elif len(selected) == 1:
+            summary = selected[0]
+        else:
+            summary = f"{len(selected)} employees selected"
+        self.lineEdit().setText(summary)
 
 
 class PreviewPanel(QFrame):
@@ -156,10 +215,19 @@ class DTRApp(QMainWindow):
         self.preview = splitter.widget(1)
 
         self.setCentralWidget(root)
-        self.setStatusBar(QStatusBar())
+        status_bar = QStatusBar()
+        footer_label = QLabel('v.3.0 "Created by Jolou"')
+        footer_label.setObjectName("footerLabel")
+        status_bar.addPermanentWidget(footer_label)
+        self.setStatusBar(status_bar)
         self.statusBar().showMessage("Ready to generate an NIA DTR form")
 
     def _build_options(self):
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
         panel = QFrame()
         panel.setObjectName("optionsPanel")
         layout = QVBoxLayout(panel)
@@ -170,7 +238,7 @@ class DTRApp(QMainWindow):
         heading.setObjectName("panelTitle")
         layout.addWidget(heading)
 
-        source_group = QGroupBox("Attendance source")
+        source_group = QGroupBox("Step 1: Select CSV file")
         source_layout = QVBoxLayout(source_group)
         source_row = QHBoxLayout()
         self.csv_edit = QLineEdit()
@@ -187,7 +255,7 @@ class DTRApp(QMainWindow):
         source_layout.addWidget(self.file_hint)
         layout.addWidget(source_group)
 
-        period_group = QGroupBox("Pay period")
+        period_group = QGroupBox("Step 2: Select pay period and time format")
         period_form = QGridLayout(period_group)
         period_form.setContentsMargins(0, 0, 0, 0)
         period_form.setVerticalSpacing(12)
@@ -219,7 +287,22 @@ class DTRApp(QMainWindow):
         period_form.addWidget(self.time_combo, 2, 0, 1, 4)
         layout.addWidget(period_group)
 
-        output_group = QGroupBox("Output")
+        employee_group = QGroupBox("Step 3: Select employees")
+        employee_form = QGridLayout(employee_group)
+        employee_form.setContentsMargins(0, 0, 0, 0)
+        employee_form.setVerticalSpacing(12)
+        self.employee_mode_combo = QComboBox()
+        self.employee_mode_combo.addItems([
+            "All employees", "Selected employee", "All employees except"
+        ])
+        self.employee_mode_combo.currentIndexChanged.connect(self._update_employee_selector)
+        self.employee_combo = MultiSelectComboBox()
+        self.employee_combo.setEnabled(False)
+        employee_form.addWidget(self.employee_mode_combo, 0, 0, 1, 2)
+        employee_form.addWidget(self.employee_combo, 1, 0, 1, 2)
+        layout.addWidget(employee_group)
+
+        output_group = QGroupBox("Step 4: Type file name")
         output_form = QGridLayout(output_group)
         output_form.setContentsMargins(0, 0, 0, 0)
         output_form.setColumnStretch(1, 1)
@@ -231,22 +314,17 @@ class DTRApp(QMainWindow):
         output_form.addWidget(output_hint, 1, 0, 1, 2)
         layout.addWidget(output_group)
 
-        action_row = QHBoxLayout()
-        self.preview_button = QPushButton("Preview PDF")
-        self.preview_button.setObjectName("secondaryButton")
-        self.preview_button.clicked.connect(lambda: self.generate(1))
-        action_row.addWidget(self.preview_button)
-        self.print_button = QPushButton("Print PDF")
+        self.print_button = QPushButton("Download / Print PDF")
         self.print_button.setObjectName("primaryButton")
-        self.print_button.clicked.connect(lambda: self.generate(3))
-        action_row.addWidget(self.print_button)
-        layout.addLayout(action_row)
+        self.print_button.clicked.connect(self.generate)
+        layout.addWidget(self.print_button)
         self.open_button = QPushButton("Open output folder")
         self.open_button.setObjectName("secondaryButton")
         self.open_button.clicked.connect(self.open_output_folder)
         layout.addWidget(self.open_button)
         layout.addStretch()
-        return panel
+        scroll_area.setWidget(panel)
+        return scroll_area
 
     def _apply_styles(self):
         self.setStyleSheet(
@@ -255,6 +333,7 @@ class DTRApp(QMainWindow):
             QMainWindow { background: #f4f1eb; }
             QLabel#title { color: #173f3a; font-size: 28px; font-weight: 700; }
             QLabel#subtitle, QLabel#hint { color: #6d7773; }
+            QLabel#footerLabel { color: #7b847f; font-size: 11px; }
             QLabel#panelTitle { color: #173f3a; font-size: 18px; font-weight: 700; }
             QFrame#optionsPanel, QFrame#previewPanel { background: #fffdf9; border: 1px solid #ddd8cf; border-radius: 8px; }
             QGroupBox { color: #344742; font-weight: 700; border: 1px solid #e2ddd4; border-radius: 6px; margin-top: 10px; padding: 16px 12px 12px; }
@@ -277,6 +356,15 @@ class DTRApp(QMainWindow):
         if path:
             self.csv_edit.setText(path)
             self.file_hint.setText(f"Selected: {os.path.basename(path)}")
+            try:
+                employee_names = sorted(NIADTRProcessor().load_and_group(path))
+            except Exception as error:
+                self.employee_combo.set_items([])
+                self.file_hint.setText(f"Could not read CSV: {error}")
+                self.statusBar().showMessage("CSV file could not be read")
+                return
+            self.employee_combo.set_items(employee_names)
+            self._update_employee_selector()
             self.statusBar().showMessage("CSV file selected")
 
     def _validated_values(self):
@@ -288,23 +376,30 @@ class DTRApp(QMainWindow):
         filename = os.path.basename(self.output_edit.text().strip() or "nia_dtr_format.pdf")
         if not filename.lower().endswith(".pdf"):
             filename += ".pdf"
+        employee_mode = ("all", "selected", "except")[self.employee_mode_combo.currentIndex()]
+        employee_names = self.employee_combo.selected_items()
+        if employee_mode != "all" and not employee_names:
+            raise ValueError("Select at least one employee for the chosen employee scope.")
         return (csv_path, self.year_spin.value(), self.month_combo.currentIndex() + 1,
             self.half_combo.currentIndex() + 1, filename,
-            "24" if self.time_combo.currentIndex() == 0 else "12")
+            "24" if self.time_combo.currentIndex() == 0 else "12",
+            employee_mode, employee_names)
 
-    def generate(self, copies):
+    def _update_employee_selector(self):
+        enabled = self.employee_mode_combo.currentIndex() != 0
+        self.employee_combo.setEnabled(enabled)
+
+    def generate(self):
         try:
             values = self._validated_values()
         except ValueError as error:
             QMessageBox.warning(self, "Check form settings", str(error))
             return
 
-        self.preview_button.setEnabled(False)
         self.print_button.setEnabled(False)
-        action = "preview" if copies == 1 else "print"
-        self.statusBar().showMessage(f"Generating {action} PDF...")
+        self.statusBar().showMessage("Generating printable PDF...")
         self.worker_thread = QThread(self)
-        self.worker = GenerationWorker(*values, copies)
+        self.worker = GenerationWorker(*values, 3)
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.run)
         self.worker.finished.connect(self.on_success)
@@ -315,20 +410,16 @@ class DTRApp(QMainWindow):
         self.worker_thread.finished.connect(self.worker_thread.deleteLater)
         self.worker_thread.start()
 
-    def on_success(self, path, count, period, is_preview):
-        self.preview_button.setEnabled(True)
+    def on_success(self, path, count, period):
         self.print_button.setEnabled(True)
-        action = "Preview" if is_preview else "Printable"
-        self.statusBar().showMessage(f"Generated {action.lower()} PDF for {count} personnel records")
-        if is_preview:
-            self.preview.load(path)
+        self.statusBar().showMessage(f"Generated printable PDF for {count} personnel records")
+        self.preview.load(path)
         QMessageBox.information(
             self, "DTR generated",
-            f"{action} DTR created successfully for {period}.\n\nSaved to:\n{path}"
+            f"Printable DTR created successfully for {period}.\n\nSaved to:\n{path}"
         )
 
     def on_failure(self, message, detail):
-        self.preview_button.setEnabled(True)
         self.print_button.setEnabled(True)
         self.statusBar().showMessage("Generation failed")
         print(detail)

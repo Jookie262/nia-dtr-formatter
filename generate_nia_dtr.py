@@ -614,7 +614,8 @@ class NIADTRProcessor(DTRProcessor):
 
     def generate(self, csv_path: str, year: int, month: int, half: int,
                  output_filename: str = "NIA_DTR_combined.pdf",
-                 time_format: str = "24", copies: int = 3):
+                 time_format: str = "24", copies: int = 3,
+                 employee_mode: str = "all", employee_names: list = None):
         """
         Generate an NIA-format DTR PDF from a CSV file for a specific half-month period.
         
@@ -634,6 +635,20 @@ class NIADTRProcessor(DTRProcessor):
         output_path = os.path.join(output_dir, filename)
 
         grouped = self.load_and_group(csv_path)
+        employee_names = set(employee_names or [])
+        if employee_mode == "selected":
+            grouped = {
+                name: grouped[name] for name in employee_names if name in grouped
+            }
+        elif employee_mode == "except":
+            grouped = {
+                name: data for name, data in grouped.items()
+                if name not in employee_names
+            }
+        elif employee_mode != "all":
+            raise ValueError(f"Unknown employee selection mode: {employee_mode}")
+        if not grouped:
+            raise ValueError("No employees remain in the selected employee scope.")
         period_dates = self.get_period_dates(year, month, half)
         names = self.build_combined_pdf(
             grouped, period_dates, output_path, time_format, copies
