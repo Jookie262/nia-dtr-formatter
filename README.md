@@ -1,5 +1,9 @@
 # NIA DTR Formatter
+<a href="https://github.com/Jookie262/nia-dtr-formatter/releases/download/v.3.0/NIA.DTR.Generator.v3.0.zip">
+  <img src="https://img.shields.io/badge/Download-v3.0-075e61?style=for-the-badge"/>
+</a>
 
+<br>
 Python tools for turning raw attendance scan logs into printable Daily Time Record (DTR) PDFs, including the NIA Regional Office VI form.
 
 <p align="center">
@@ -13,6 +17,12 @@ Python tools for turning raw attendance scan logs into printable Daily Time Reco
 ## About The Project
 
 Attendance exports are useful as source data, but they are not always ready to print or submit as a DTR. This project groups raw employee scans by date, assigns them to AM/PM time slots, calculates daily totals, and produces PDF reports.
+
+### Screenshot
+<img width="960" height="564" alt="NIA_DTR_Generator_v3 0_xuuSOv84FT" src="https://github.com/user-attachments/assets/e8deb52a-72fe-4428-9537-39b3530daef8" />
+
+### How it works
+https://github.com/user-attachments/assets/6a070107-bf62-421b-8d80-7cd0dae4e104
 
 ### Features
 
