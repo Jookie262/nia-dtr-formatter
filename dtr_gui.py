@@ -6,12 +6,17 @@ import sys
 import traceback
 from datetime import date
 
-from PyQt6.QtCore import QObject, QThread, QTimer, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QDesktopServices, QIcon
+from PyQt6.QtCore import (
+    QSortFilterProxyModel, QObject, QThread, QTimer, Qt, QUrl, pyqtSignal,
+)
+from PyQt6.QtGui import (
+    QCloseEvent, QDesktopServices, QIcon, QStandardItem, QStandardItemModel,
+)
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QSpinBox,
     QSizePolicy, QSplitter, QScrollArea, QStatusBar, QVBoxLayout, QWidget, QComboBox,
+    QStyleFactory, QToolButton,
 )
 
 from generate_nia_dtr import NIADTRProcessor
@@ -77,41 +82,71 @@ class GenerationWorker(QObject):
 
 
 class MultiSelectComboBox(QComboBox):
-    """A compact checkable dropdown for selecting multiple employees."""
+    """A searchable, checkable dropdown for selecting multiple employees."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._reopening = False
+        self._source_model = QStandardItemModel(self)
+        self._proxy_model = QSortFilterProxyModel(self)
+        self._proxy_model.setSourceModel(self._source_model)
+        self._proxy_model.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._proxy_model.setFilterKeyColumn(0)
+        self.setModel(self._proxy_model)
         self.setEditable(True)
-        self.lineEdit().setReadOnly(True)
-        self.lineEdit().setPlaceholderText("Select one or more employees")
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.lineEdit().setPlaceholderText("Search and select employees")
+        self.lineEdit().textEdited.connect(self._filter_items)
         self.view().pressed.connect(self._toggle_item)
 
     def set_items(self, items):
-        self.clear()
-        self.addItems(items)
-        for row in range(self.model().rowCount()):
-            item = self.model().item(row)
+        self._source_model.clear()
+        for name in items:
+            item = QStandardItem(name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setData(Qt.CheckState.Unchecked, Qt.ItemDataRole.CheckStateRole)
+            self._source_model.appendRow(item)
+        self._proxy_model.setFilterFixedString("")
         self._update_summary()
 
     def selected_items(self):
         return [
-            self.model().item(row).text()
-            for row in range(self.model().rowCount())
-            if self.model().item(row).checkState() == Qt.CheckState.Checked
+            self._source_model.item(row).text()
+            for row in range(self._source_model.rowCount())
+            if self._source_model.item(row).checkState() == Qt.CheckState.Checked
         ]
 
     def _toggle_item(self, index):
-        item = self.model().item(index.row())
+        source_index = self._proxy_model.mapToSource(index)
+        item = self._source_model.itemFromIndex(source_index)
         new_state = (
             Qt.CheckState.Unchecked
             if item.checkState() == Qt.CheckState.Checked
             else Qt.CheckState.Checked
         )
         item.setData(new_state, Qt.ItemDataRole.CheckStateRole)
-        self._update_summary()
-        QTimer.singleShot(0, self.showPopup)
+        self._reopening = True
+        QTimer.singleShot(0, self._reopen_popup)
+
+    def _filter_items(self, text):
+        self._proxy_model.setFilterFixedString(text.strip())
+
+    def showPopup(self):
+        self.lineEdit().clear()
+        self._proxy_model.setFilterFixedString("")
+        super().showPopup()
+        self.lineEdit().setFocus()
+
+    def _reopen_popup(self):
+        self._reopening = False
+        super().showPopup()
+        self.lineEdit().setFocus()
+
+    def hidePopup(self):
+        super().hidePopup()
+        if not self._reopening:
+            self._proxy_model.setFilterFixedString("")
+            self._update_summary()
 
     def _update_summary(self):
         selected = self.selected_items()
@@ -123,6 +158,15 @@ class MultiSelectComboBox(QComboBox):
             summary = f"{len(selected)} employees selected"
         self.lineEdit().setText(summary)
 
+    def clear_selection(self):
+        for row in range(self._source_model.rowCount()):
+            self._source_model.item(row).setData(
+                Qt.CheckState.Unchecked, Qt.ItemDataRole.CheckStateRole
+            )
+        self.lineEdit().clear()
+        self._proxy_model.setFilterFixedString("")
+        self._update_summary()
+
 
 class PreviewPanel(QFrame):
     """PDF preview that uses Qt PDF support when available."""
@@ -131,13 +175,39 @@ class PreviewPanel(QFrame):
         super().__init__(parent)
         self.document = None
         self.view = None
+        self.document_path = None
         self.setObjectName("previewPanel")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        heading = QLabel("Preview")
+        toolbar = QWidget()
+        toolbar.setObjectName("previewToolbar")
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(20, 12, 20, 12)
+        toolbar_layout.setSpacing(8)
+        heading = QLabel("DOCUMENT PREVIEW")
         heading.setObjectName("panelTitle")
-        layout.addWidget(heading)
+        toolbar_layout.addWidget(heading)
+        toolbar_layout.addStretch()
+        self.zoom_out = QToolButton()
+        self.zoom_out.setText("-")
+        self.zoom_out.setToolTip("Zoom out")
+        self.zoom_in = QToolButton()
+        self.zoom_in.setText("+")
+        self.zoom_in.setToolTip("Zoom in")
+        self.zoom_label = QLabel("100%")
+        self.zoom_label.setObjectName("zoomLabel")
+        toolbar_layout.addWidget(self.zoom_out)
+        toolbar_layout.addWidget(self.zoom_label)
+        toolbar_layout.addWidget(self.zoom_in)
+        toolbar_layout.addSpacing(12)
+        open_button = QToolButton()
+        open_button.setText("Open")
+        open_button.setToolTip("Open the generated PDF")
+        open_button.clicked.connect(self._open_document)
+        toolbar_layout.addWidget(open_button)
+        layout.addWidget(toolbar)
 
         if QPdfDocument is None:
             empty = QLabel("Install PyQt6 PDF support to preview generated forms.")
@@ -149,8 +219,26 @@ class PreviewPanel(QFrame):
         self.view = QPdfView(self)
         self.view.setDocument(self.document)
         self.view.setPageMode(QPdfView.PageMode.MultiPage)
+        self.view.setZoomMode(QPdfView.ZoomMode.Custom)
+        self.view.setZoomFactor(1.0)
+        self.zoom_out.clicked.connect(lambda: self._change_zoom(0.9))
+        self.zoom_in.clicked.connect(lambda: self._change_zoom(1.1))
+        self.view.zoomFactorChanged.connect(self._update_zoom_label)
         layout.addWidget(self.view, 1)
         self.show_message("Choose a CSV file and generate a form to preview it here.")
+
+    def _change_zoom(self, multiplier):
+        if self.view is None:
+            return
+        zoom = max(0.25, min(4.0, self.view.zoomFactor() * multiplier))
+        self.view.setZoomFactor(zoom)
+
+    def _update_zoom_label(self, factor):
+        self.zoom_label.setText(f"{round(factor * 100)}%")
+
+    def _open_document(self):
+        if self.document is not None and self.document.pageCount() > 0 and self.document_path:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self.document_path))
 
     def show_message(self, text):
         if self.view is None:
@@ -162,8 +250,9 @@ class PreviewPanel(QFrame):
         if self.document is None:
             return
         self.document.load(path)
+        self.document_path = path
         self.view.setEnabled(True)
-        self.view.setToolTip(path)
+        self.view.setZoomFactor(1.0)
 
 
 class DTRApp(QMainWindow):
@@ -176,7 +265,7 @@ class DTRApp(QMainWindow):
         self.worker_thread = None
         self.worker = None
         self.setWindowTitle("NIA DTR Formatter")
-        self.setMinimumSize(1050, 800)
+        self.setMinimumSize(1000, 680)
         self.resize(1200, 780)
         self._set_icon()
         self._build_ui()
@@ -191,18 +280,26 @@ class DTRApp(QMainWindow):
         root = QWidget()
         root.setObjectName("root")
         root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(28, 24, 28, 18)
-        root_layout.setSpacing(16)
+        root_layout.setContentsMargins(20, 16, 20, 16)
+        root_layout.setSpacing(12)
 
         header = QHBoxLayout()
-        title = QLabel("NIA Daily Time Record")
+        header.setSpacing(0)
+        title = QLabel("NIA Daily Time Record Formatter")
         title.setObjectName("title")
         subtitle = QLabel("Regional Office No. VI | Panay River Basin Integrated Development Project")
         subtitle.setObjectName("subtitle")
         header_text = QVBoxLayout()
+        header_text.setSpacing(1)
         header_text.addWidget(title)
         header_text.addWidget(subtitle)
-        header.addLayout(header_text)
+        header_text_widget = QWidget()
+        header_text_widget.setLayout(header_text)
+        header_text_widget.setFixedWidth(590)
+        header_text_widget.setObjectName("headerText")
+        title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        header.addWidget(header_text_widget)
         header.addStretch()
         root_layout.addLayout(header)
 
@@ -216,7 +313,8 @@ class DTRApp(QMainWindow):
 
         self.setCentralWidget(root)
         status_bar = QStatusBar()
-        footer_label = QLabel('v.3.0 "Created by Jolou"')
+        status_bar.setSizeGripEnabled(False)
+        footer_label = QLabel("v.3.0 • Created by Jolou • September 5, 2026")
         footer_label.setObjectName("footerLabel")
         status_bar.addPermanentWidget(footer_label)
         self.setStatusBar(status_bar)
@@ -231,14 +329,14 @@ class DTRApp(QMainWindow):
         panel = QFrame()
         panel.setObjectName("optionsPanel")
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(16)
 
-        heading = QLabel("Form settings")
+        heading = QLabel("DOCUMENT SETTINGS")
         heading.setObjectName("panelTitle")
         layout.addWidget(heading)
 
-        source_group = QGroupBox("Step 1: Select CSV file")
+        source_group = QGroupBox("1   Attendance CSV File")
         source_layout = QVBoxLayout(source_group)
         source_row = QHBoxLayout()
         self.csv_edit = QLineEdit()
@@ -255,7 +353,7 @@ class DTRApp(QMainWindow):
         source_layout.addWidget(self.file_hint)
         layout.addWidget(source_group)
 
-        period_group = QGroupBox("Step 2: Select pay period and time format")
+        period_group = QGroupBox("2   Pay Period and Time Format")
         period_form = QGridLayout(period_group)
         period_form.setContentsMargins(0, 0, 0, 0)
         period_form.setVerticalSpacing(12)
@@ -287,7 +385,7 @@ class DTRApp(QMainWindow):
         period_form.addWidget(self.time_combo, 2, 0, 1, 4)
         layout.addWidget(period_group)
 
-        employee_group = QGroupBox("Step 3: Select employees")
+        employee_group = QGroupBox("3   Employees")
         employee_form = QGridLayout(employee_group)
         employee_form.setContentsMargins(0, 0, 0, 0)
         employee_form.setVerticalSpacing(12)
@@ -302,7 +400,7 @@ class DTRApp(QMainWindow):
         employee_form.addWidget(self.employee_combo, 1, 0, 1, 2)
         layout.addWidget(employee_group)
 
-        output_group = QGroupBox("Step 4: Type file name")
+        output_group = QGroupBox("4   Output File")
         output_form = QGridLayout(output_group)
         output_form.setContentsMargins(0, 0, 0, 0)
         output_form.setColumnStretch(1, 1)
@@ -314,7 +412,7 @@ class DTRApp(QMainWindow):
         output_form.addWidget(output_hint, 1, 0, 1, 2)
         layout.addWidget(output_group)
 
-        self.print_button = QPushButton("Download / Print PDF")
+        self.print_button = QPushButton("GENERATE DTR")
         self.print_button.setObjectName("primaryButton")
         self.print_button.clicked.connect(self.generate)
         layout.addWidget(self.print_button)
@@ -327,26 +425,55 @@ class DTRApp(QMainWindow):
         return scroll_area
 
     def _apply_styles(self):
+        arrow_path = os.path.join(BASE_DIR, "img", "combobox_arrow.svg").replace("\\", "/")
         self.setStyleSheet(
             """
-            QWidget#root { background: #f4f1eb; }
-            QMainWindow { background: #f4f1eb; }
-            QLabel#title { color: #173f3a; font-size: 28px; font-weight: 700; }
-            QLabel#subtitle, QLabel#hint { color: #6d7773; }
-            QLabel#footerLabel { color: #7b847f; font-size: 11px; }
-            QLabel#panelTitle { color: #173f3a; font-size: 18px; font-weight: 700; }
-            QFrame#optionsPanel, QFrame#previewPanel { background: #fffdf9; border: 1px solid #ddd8cf; border-radius: 8px; }
-            QGroupBox { color: #344742; font-weight: 700; border: 1px solid #e2ddd4; border-radius: 6px; margin-top: 10px; padding: 16px 12px 12px; }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }
-            QLineEdit, QComboBox, QSpinBox { background: #ffffff; border: 1px solid #c9cec8; border-radius: 4px; padding: 8px; color: #26312e; }
-            QPushButton { border-radius: 4px; padding: 10px 14px; font-weight: 700; }
-            QPushButton#primaryButton { background: #c45d35; color: white; min-height: 44px; }
-            QPushButton#primaryButton:hover { background: #a94c2c; }
-            QPushButton#secondaryButton { background: #e6eee9; color: #174b44; }
-            QPushButton#secondaryButton:hover { background: #d2e2da; }
-            QSplitter::handle { background: #d6d0c5; width: 8px; }
-            QStatusBar { color: #52615b; }
-            """
+            QWidget#root, QMainWindow { background: #f5f7f6; }
+            QLabel#title { color: #0d5557; font-size: 27px; font-weight: 700; }
+            QLabel#subtitle, QLabel#hint { color: #71807f; font-size: 11px; }
+            QLabel#headerLogo { min-width: 42px; }
+            QLabel#headerVersion { color: #52706d; font-size: 10px; font-weight: 700; }
+            QLabel#footerLabel { color: #52706d; font-size: 11px; background: transparent; border: none; }
+            QLabel#panelTitle { color: #0e5c5e; font-size: 13px; font-weight: 800; letter-spacing: 1px; }
+            QLabel#zoomLabel { color: #516c6b; min-width: 42px; qproperty-alignment: AlignCenter; }
+            QFrame#optionsPanel, QFrame#previewPanel { background: #ffffff; border: 1px solid #dce5e3; border-radius: 10px; }
+            QWidget#previewToolbar { background: #ffffff; border-bottom: 1px solid #e2e9e7; }
+            QGroupBox { color: #0e5c5e; background: #fbfcfc; font-weight: 700; border: 1px solid #e0e8e6; border-radius: 9px; margin-top: 12px; padding: 22px 12px 12px; }
+            QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
+            QLineEdit, QSpinBox { background: #ffffff; border: 1px solid #c9d7d4; border-radius: 5px; padding: 8px; color: #263b3a; min-height: 18px; }
+            QLineEdit:focus, QSpinBox:focus { border: 1px solid #118184; }
+            QComboBox { background: #ffffff; border: 1px solid #bfd1ce; border-radius: 7px; padding: 9px 36px 9px 11px; color: #23413f; min-height: 18px; }
+            QComboBox:hover { border-color: #76aaa5; background: #fcfefe; }
+            QComboBox:focus { border: 2px solid #118184; padding: 8px 35px 8px 10px; }
+            QComboBox:disabled { color: #91a3a0; background: #eef3f2; border-color: #d8e2e0; }
+            QComboBox::drop-down { width: 30px; border: 0; border-left: 1px solid #d7e3e0; border-top-right-radius: 7px; border-bottom-right-radius: 7px; background: #f1f7f5; }
+            QComboBox::drop-down:hover { background: #e2f0ec; }
+            QComboBox::down-arrow { image: url(__COMBO_ARROW__); width: 10px; height: 6px; }
+            QComboBox QAbstractItemView { background: #ffffff; border: 1px solid #b8cfcb; border-radius: 6px; padding: 5px; color: #23413f; selection-background-color: #d9eeea; selection-color: #0b5e60; outline: 0; }
+            QComboBox QAbstractItemView::item { min-height: 30px; padding: 6px 9px; border-radius: 4px; }
+            QComboBox QAbstractItemView::item:hover { background: #edf7f5; }
+            QScrollBar:vertical { background: #f1f6f5; width: 10px; margin: 2px 2px 2px 0; border-radius: 5px; }
+            QScrollBar::handle:vertical { background: #9fc5c0; min-height: 34px; border-radius: 5px; }
+            QScrollBar::handle:vertical:hover { background: #579b96; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; background: transparent; }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
+            QScrollBar:horizontal { background: #f1f6f5; height: 10px; margin: 0 2px 2px 2px; border-radius: 5px; }
+            QScrollBar::handle:horizontal { background: #9fc5c0; min-width: 34px; border-radius: 5px; }
+            QScrollBar::handle:horizontal:hover { background: #579b96; }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; background: transparent; }
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }
+            QPushButton, QToolButton { border-radius: 5px; padding: 9px 13px; font-weight: 700; }
+            QToolButton { background: #ffffff; color: #365b5a; border: 1px solid #e0e8e6; padding: 7px 10px; }
+            QToolButton:hover { background: #e9f3f1; }
+            QPushButton#primaryButton { background: #087578; color: white; min-height: 45px; letter-spacing: 1px; }
+            QPushButton#primaryButton:hover { background: #075e61; }
+            QPushButton#secondaryButton { background: #e7f2f0; color: #126163; }
+            QPushButton#secondaryButton:hover { background: #d6e9e5; }
+            QSplitter::handle { background: #dbe6e3; width: 8px; }
+            QScrollArea { background: transparent; }
+            QStatusBar { color: #52706d; background: transparent; border: none; }
+            QStatusBar::item { border: none; background: transparent; }
+            """.replace("__COMBO_ARROW__", arrow_path)
         )
 
     def browse_csv(self):
@@ -387,6 +514,8 @@ class DTRApp(QMainWindow):
 
     def _update_employee_selector(self):
         enabled = self.employee_mode_combo.currentIndex() != 0
+        if not enabled:
+            self.employee_combo.clear_selection()
         self.employee_combo.setEnabled(enabled)
 
     def generate(self):
@@ -438,6 +567,7 @@ class DTRApp(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    app.setStyle(QStyleFactory.create("Windows"))
     window = DTRApp()
     window.show()
     sys.exit(app.exec())
